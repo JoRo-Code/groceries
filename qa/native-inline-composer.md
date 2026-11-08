@@ -15,3 +15,9 @@ Debug simulator build passed. Actual simulator interaction checks:
 Evidence: native-inline-keyboard.png, native-inline-added.png, native-inline-scroll-before.png, native-inline-scroll-after.png, native-inline-dark.png, native-inline-bottom-closed.png. All screenshots contain synthetic preview data; no production writes. Some rapid captures include keyboard transition frames; release screenshots should be recaptured after animations settle.
 
 QA launch flags remain --preview-shopping/--preview-add/--preview-history with --app-store-screenshots, optionally --preview-hide-keyboard. Release has no preview bypass. The final small cancellation-target reset is structurally reviewed; integration's final archive recompiles it. No backend changes.
+
+## Empty-list dismissal follow-up (8 November 2026)
+
+Removed the redundant empty-list helper text in ItemsView. Suggestion overlay has an identity transition; closeComposer clears focus/composer state in a transaction with animations disabled. Existing list ScrollView and observation remain mounted.
+
+Debug build passed (`/tmp/handla-dismiss-build.log`). Simulator verified a newly created empty preview list in light and dark appearance: opening focuses the text field with software keyboard; closing via X or title returns to the empty list without helper text. Evidence: `/tmp/dismiss-{light,dark}-{before,open,after}.png`. This source change is not in the build currently submitted to App Store review; no archive/upload/submission was changed.

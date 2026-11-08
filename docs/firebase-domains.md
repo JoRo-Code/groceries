@@ -38,6 +38,7 @@ All Hosting address records use Cloudflare **DNS only**, not proxying. Existing 
 | `www.palisty.com` | CNAME | `palisty-landing.web.app` |
 | `_acme-challenge.app.palisty.com` | TXT | `s50uTbMNsPfedT_AFv_9FHNWRnFKfMvewHG4lshH1wg` |
 | `_acme-challenge.palisty.com` | TXT | `VP4LaleyOqeHWYVTQdbVrbk3-NCeGmyFtXc6OFspW7Y` |
+| `_acme-challenge.www.palisty.com` | TXT | `B7WuXa6X5KmyGgfpQAcv3DCxWBXJCgiQwq0KFZ9ziU0` |
 
 Certificate challenge values above are public DNS proof values, not credentials. They may rotate; re-inspect the API if verification fails.
 
@@ -45,6 +46,6 @@ Certificate challenge values above are public DNS proof values, not credentials.
 
 Both Hosting releases completed on 8 November 2026. The existing app serves `assets/index-i10u-As6.js`; AASA still identifies `P92GB9QRA5.se.groceriesros.handla`. The landing default URL is `https://palisty-landing.web.app`; mobile live checks passed HTTP 200, no overflow, interactive illustration, canonical URL, CTA and no CSP/JavaScript errors.
 
-At the latest domain check, `app.palisty.com` was `HOST_ACTIVE` and `OWNERSHIP_ACTIVE`, but its certificate remained `CERT_VALIDATING`. A real HTTPS attempt with the Hosting IP failed hostname validation, so custom HTTPS is **not yet verified ready**. The existing Firebase default URLs continue working while DNS caches and certificates converge. Update this status only after successful real HTTPS checks; do not bypass TLS errors for users.
+After all DNS records were saved, Firebase confirmed `HOST_ACTIVE` and `OWNERSHIP_ACTIVE` for all three domains (`app.palisty.com`, `palisty.com`, `www.palisty.com`). All three certificates remained `CERT_VALIDATING` at the 17:10 UTC check. Real HTTPS attempts with the Hosting IP failed hostname validation for all three, so custom HTTPS is **not yet verified ready**. The existing Firebase default URLs continue working while DNS caches and certificates converge. Update this status only after successful real HTTPS checks; do not bypass TLS errors for users.
 
 The new app domain is a separate browser origin, so users sign in again there. Native Associated Domains remain unchanged; new-domain invitation links work on the web, while old-domain links retain their existing native association.
