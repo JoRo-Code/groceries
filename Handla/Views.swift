@@ -44,7 +44,7 @@ struct RootView: View {
                             }.disabled(link.isEmpty)
                         }
                         Section { AccountLinks(); Button("Radera konto", role: .destructive) { deletingAccount = true }.disabled(store.busy) }
-                        Button("Logga ut") { do { try store.signOut() } catch { store.error = error.localizedDescription } }.disabled(store.busy)
+                        Button("Logga ut") { store.perform { try await store.signOut() } }.disabled(store.busy)
                     }.navigationTitle("Handla")
                 } else { ListsView() }
             }
@@ -52,7 +52,7 @@ struct RootView: View {
         .id(store.sessionID)
         .sheet(isPresented: $deletingAccount) { AccountDeletionView() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await store.loadPendingInvite() } }
+            if phase == .active { Task { await store.loadPendingInvite(); await PushNotifications.shared.refreshPermission(); await PushNotifications.shared.routePending() } }
         }
         .sheet(item: $store.invitation, onDismiss: store.dismissInvite) { invite in
             VStack(spacing: 24) {
@@ -153,7 +153,7 @@ struct ListsView: View {
                 ListOverview(lists: lists, preview: preview, canGoBack: selected != nil,
                     exampleItems: exampleItems,
                     onBack: { showingOverview = false },
-                    onSelect: { selectedID = $0.id; showingOverview = false },
+                    onSelect: { list in selectedID = list.id; showingOverview = false; if !preview { do { try store.rememberViewedList(list.id) } catch { store.error = error.localizedDescription } } },
                     onCreate: { name in
                         if preview {
                             let list = ShoppingList(id: UUID().uuidString, name: name)
@@ -175,6 +175,18 @@ struct ListsView: View {
         }
         .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear { pinSelection(); openNotificationList() }
+        .onChange(of: lists.map(\.id)) { _, _ in pinSelection(); openNotificationList() }
+        .onChange(of: store.notificationRoute) { _, _ in openNotificationList() }
+    }
+    private func pinSelection() {
+        guard selectedID == nil || !lists.contains(where: { $0.id == selectedID }) else { return }
+        selectedID = lists.first(where: { $0.id == store.lastViewedListID })?.id ?? lists.first?.id
+    }
+    private func openNotificationList() {
+        guard !preview, let route = store.notificationRoute, route.workspaceID == store.workspaceID, lists.contains(where: { $0.id == route.listID }) else { return }
+        selectedID = route.listID; showingOverview = false; store.notificationRoute = nil
+        do { try store.rememberViewedList(route.listID) } catch { store.error = error.localizedDescription }
     }
 }
 
@@ -232,9 +244,10 @@ struct WorkspaceView: View {
                     }
                 }
                 if let error = store.error { Section { Text(error).foregroundStyle(.red) } }
+                if !preview && PushNotifications.shared.available { NotificationSettingsView() }
                 Section("Om Handla") { AccountLinks() }
                 if !preview { Section("Konto") { Button("Radera konto", role: .destructive) { deletingAccount = true }.disabled(store.busy) } }
-                if !preview { Button("Logga ut") { do { try store.signOut(); dismiss() } catch { store.error = error.localizedDescription } }.disabled(store.busy) }
+                if !preview { Button("Logga ut") { store.perform { try await store.signOut(); dismiss() } }.disabled(store.busy) }
             }.navigationTitle("Ert hushåll").toolbar { Button("Klart") { dismiss() }.disabled(store.deletingAccount) }
             .sheet(isPresented: $deletingAccount) { AccountDeletionView() }
         }
@@ -555,6 +568,9 @@ struct ItemsView: View {
         .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
         .tint(handlaBlue)
+        .onReceive(store.$notificationRoute) { route in
+            if let route, route.listID == list.id { closeComposer(); editing = nil; showingWorkspace = false }
+        }
         .onChange(of: addFocused) { _, focused in if focused { adding = true } }
         .onChange(of: query) { _, value in
             if value.isEmpty { manualCategory = false; category = .other }
@@ -605,10 +621,8 @@ struct ItemsView: View {
                 if preview, let index = exampleItems.firstIndex(where: { $0.id == existing.id }) {
                     exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category, createdAt: existing.createdAt, checkedAt: existing.checkedAt)
                 } else {
-                    let session = store.sessionID
-                    store.itemsRef(list.id)?.document(existing.id).updateData(["checked": false]) { error in
-                        Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
-                    }
+                    do { try store.setItemChecked(existing.id, checked: false, listID: list.id) }
+                    catch { store.error = error.localizedDescription; return }
                 }
             }
             closeComposer()
@@ -656,18 +670,14 @@ struct ItemsView: View {
             guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
             exampleItems[index] = Grocery(id: item.id, name: item.name, quantity: item.quantity, checked: !item.checked, category: item.category, createdAt: item.createdAt, checkedAt: item.checked ? item.checkedAt : Date())
         } else {
-            let session = store.sessionID
-            store.itemsRef(list.id)?.document(item.id).updateData(item.checked ? ["checked": false] : ["checked": true, "checkedAt": FieldValue.serverTimestamp()]) { error in
-                Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
-            }
+            do { try store.setItemChecked(item.id, checked: !item.checked, listID: list.id) }
+            catch { store.error = error.localizedDescription }
         }
     }
     private func remove(_ item: Grocery) {
         if preview { exampleItems.removeAll { $0.id == item.id }; return }
-        let session = store.sessionID
-        store.itemsRef(list.id)?.document(item.id).delete { error in
-            Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
-        }
+        do { try store.deleteItem(item.id, listID: list.id) }
+        catch { store.error = error.localizedDescription }
     }
     private func ordered(_ values: [Grocery]) -> [Grocery] {
         values.sorted { $0.category.sortOrder == $1.category.sortOrder ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.category.sortOrder < $1.category.sortOrder }

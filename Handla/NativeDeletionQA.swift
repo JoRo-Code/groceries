@@ -12,9 +12,10 @@ enum NativeDeletionQA {
         guard !started, ProcessInfo.processInfo.arguments.contains("--qa-deletion-emulator"),
               FirebaseApp.app()?.options.projectID == "demo-handla" else { return }
         started = true
-        var report: [String: Any] = ["productionWrites": false, "project": "demo-handla"]
+        let pushData = ProcessInfo.processInfo.arguments.contains("--qa-push-data")
+        var report: [String: Any] = ["productionWrites": false, "project": "demo-handla", "pushDataEnabled": pushData]
         do {
-            try? store.signOut()
+            try? await store.signOut()
             let email = "native-delete-\(UUID().uuidString.lowercased())@example.test"
             let password = "Disposable-test-428!"
             try await store.authenticate(email: email, password: password, creatingAccount: true)
@@ -26,6 +27,41 @@ enum NativeDeletionQA {
             guard let workspaceID = plan.workspaceID else { throw HandlaError.message("QA workspace missing") }
             report["userID"] = plan.userID; report["workspaceID"] = workspaceID
             guard plan.owner, plan.successorID == nil else { throw HandlaError.message("QA solo plan incorrect") }
+            // Shared list ordering and validated notification routing, using native SDK calls.
+            guard let initialList = store.lists.first else { throw HandlaError.message("QA initial list absent") }
+            try store.addList("Zeta native QA")
+            try await db.waitForPendingWrites()
+            try await settle { store.lists.first?.name == "Zeta native QA" }
+            try store.rememberViewedList(initialList.id)
+            try await db.waitForPendingWrites()
+            let remembered = try await db.collection("users").document(plan.userID).getDocument(source: .server)
+            guard remembered.get("lastViewedListID") as? String == initialList.id, store.lists.first?.name == "Zeta native QA" else { throw HandlaError.message("QA private viewed list changed shared ranking") }
+            report["sharedChangedOrderAndPrivateViewedPreference"] = true
+            try store.addItem("Native actor QA", quantity: "2", category: .dairy, listID: initialList.id)
+            try await db.waitForPendingWrites()
+            let actorItems = try await store.itemsRef(initialList.id)!.whereField("name", isEqualTo: "Native actor QA").getDocuments(source: .server)
+            guard let actorItem = actorItems.documents.first else { throw HandlaError.message("QA item missing") }
+            guard (actorItem.get("lastActorUID") as? String) == (pushData ? plan.userID : nil) else { throw HandlaError.message("QA actor feature gate mismatch") }
+            try store.setItemChecked(actorItem.documentID, checked: true, listID: initialList.id)
+            try await db.waitForPendingWrites()
+            let checkedItem = try await actorItem.reference.getDocument(source: .server)
+            guard checkedItem.get("checked") as? Bool == true, (checkedItem.get("lastActorUID") as? String) == (pushData ? plan.userID : nil) else { throw HandlaError.message("QA checked marker missing") }
+            report["nativeActorMarkerGateVerified"] = true
+            PushNotifications.shared.start(store: store)
+            let route: [AnyHashable: Any] = ["eventID": "native-qa-valid", "type": "itemAdded", "recipientUID": plan.userID, "workspaceID": workspaceID, "listID": initialList.id]
+            await PushNotifications.shared.open(route)
+            guard PushNotifications.shared.validatedEventForQA == "native-qa-valid" else { throw HandlaError.message("QA validated list routing failed") }
+            var wrong = route; wrong["eventID"] = "native-qa-wrong-user"; wrong["recipientUID"] = "another-user"
+            await PushNotifications.shared.open(wrong)
+            guard PushNotifications.shared.validatedEventForQA == "native-qa-valid" else { throw HandlaError.message("QA wrong user notification accepted") }
+            wrong = route; wrong["eventID"] = "native-qa-wrong-household"; wrong["workspaceID"] = "another-household"
+            await PushNotifications.shared.open(wrong)
+            guard PushNotifications.shared.validatedEventForQA == "native-qa-valid" else { throw HandlaError.message("QA wrong household notification accepted") }
+            report["notificationValidRouteAndAccountHouseholdIsolation"] = true
+            if pushData {
+            try await db.collection("users").document(plan.userID).collection("devices").document("qa-device-1234567890").setData(["token": "synthetic-emulator-token-no-delivery", "platform": "ios", "updatedAt": FieldValue.serverTimestamp()])
+            report["deviceDocument"] = "qa-device-1234567890"
+            }
             let list = db.collection("workspaces").document(workspaceID).collection("lists").document("qa-list")
             try await list.setData(["name": "Disposable list"])
             // More than one purge batch: verify bounded native pagination really continues.

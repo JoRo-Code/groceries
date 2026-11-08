@@ -1,0 +1,13 @@
+# Native push configuration checkpoint
+
+Build 6 adds FirebaseMessaging from the existing Firebase 12.19.3 resolution and the Push Notifications capability. XcodeGen output validates Push, Apple sign-in and Associated Domains. Source entitlements use `aps-environment=development`; signed/exported entitlements must be checked against the actual provisioning profile before distribution (App Store delivery uses production). No background remote-notification mode is requested for visible notifications.
+
+`HandlaPushEnabled`, `FirebaseMessagingAutoInitEnabled`, and `FirebaseAppDelegateProxyEnabled` are all false. Native code owns explicit APNs token mapping and opt-in. Push is not live and no production notification was sent. This configuration does not enable billing or provision a backend.
+
+Read-only Apple Developer portal inspection on 2026-11-08 confirmed NorthSoft HB is team P92GB9QRA5, and the exact `se.groceriesros.handla` identifier already has Push Notifications enabled. The Handla Login key is for Apple sign-in and has no APNs configuration. Other applications have team-scoped APNs keys; none was downloaded or reused. Firebase-console APNs key configuration remains unverified: that Chrome profile currently disables JavaScript from Apple Events. No browser policy was changed. A dedicated suitable APNs key and Firebase upload must be verified before enabling delivery.
+
+FirebaseMessaging 12.19.3 manifest declares unlinked Device ID for app functionality, Other Data Types for analytics, and Other Diagnostic Data for app functionality, all without tracking. FirebaseInstallations declares unlinked diagnostic data for analytics. Our proposed authenticated token document links the registration token to an account, so the final app privacy label must classify that identifier as linked for functionality when enabled. Reconcile the remaining SDK purposes with the published label before submitting a build containing enabled messaging; do not infer no collection merely from absence of the Analytics SDK.
+
+References: [Firebase Apple messaging setup](https://firebase.google.com/docs/cloud-messaging/ios/get-started), [Firebase Messaging reference](https://firebase.google.com/docs/reference/swift/firebasemessaging/api/reference/Classes/Messaging), [Apple APNs entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/aps-environment).
+
+The earlier signed build 5 inline checkpoint remains at `/tmp/Handla-AppStore-build5-inline.xcarchive`; it does not include push. No build 5 upload succeeded. Xcode export reported that the current account needs App Store Connect access to P92GB9QRA5. Do not retry upload until account access changes.

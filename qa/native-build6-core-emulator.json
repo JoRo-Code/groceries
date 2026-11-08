@@ -1,0 +1,14 @@
+{
+  "authDeleted" : true,
+  "inviteToken" : "678448da-f6c6-4343-9d49-10c35a7c3eab706fb170-371c-4b1c-a214-119990f469b3",
+  "nativeActorMarkerGateVerified" : true,
+  "notificationValidRouteAndAccountHouseholdIsolation" : true,
+  "productionWrites" : false,
+  "project" : "demo-handla",
+  "pushDataEnabled" : false,
+  "sharedChangedOrderAndPrivateViewedPreference" : true,
+  "status" : "passed",
+  "userID" : "hz4J5bwei797xhmcPN2pKt0V1oz6",
+  "workspaceID" : "6MHICF8KE0zM9VPQK3RD",
+  "wrongPasswordPreservesData" : true
+}

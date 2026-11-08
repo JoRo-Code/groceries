@@ -8,10 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		2AC22F1D5520EA878486C95C /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7ADA7AEE2B55451B1351E62 /* Store.swift */; };
+		3F355C1F6687F2FACD269D3A /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = F65BCCDB7F64518C0530A45B /* FirebaseMessaging */; };
 		47CA6809993289F186867679 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = D7CF284A6C99CCDC8979C418 /* FirebaseAuth */; };
 		4E4F5541715BF3FA8011476F /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = C216343F7E179CCFE5AE0F74 /* FirebaseFirestore */; };
 		B9F60EE9B7F9FA1955EDE459 /* NativeDeletionQA.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA952FA5FFFEF8677295030 /* NativeDeletionQA.swift */; };
 		BEAE25916E281E2477C4F7E4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EE678C37C661D392EE24C768 /* Assets.xcassets */; };
+		C4054DB4D218AEFC39CEAFEA /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A1D1BCA6EB4D58FA4C3826 /* Notifications.swift */; };
 		D331E6998E8E902CF70FD762 /* AccountDeletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018C08D088B4617037DD010F /* AccountDeletionView.swift */; };
 		D7D1626E6428BEAFB02FD9D2 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9A6443C2D4D833A6139450B /* Views.swift */; };
 		DC0DC6C44655A116D3ED64DC /* GroceryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E65E7EF1636FB0C346E15BFB /* GroceryCatalog.swift */; };
@@ -31,6 +33,7 @@
 		C9A6443C2D4D833A6139450B /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		DEA952FA5FFFEF8677295030 /* NativeDeletionQA.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDeletionQA.swift; sourceTree = "<group>"; };
 		E0B742DAB5463BD7B1885833 /* Handla.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Handla.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E4A1D1BCA6EB4D58FA4C3826 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
 		E65E7EF1636FB0C346E15BFB /* GroceryCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryCatalog.swift; sourceTree = "<group>"; };
 		EE678C37C661D392EE24C768 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -42,6 +45,7 @@
 			files = (
 				47CA6809993289F186867679 /* FirebaseAuth in Frameworks */,
 				4E4F5541715BF3FA8011476F /* FirebaseFirestore in Frameworks */,
+				3F355C1F6687F2FACD269D3A /* FirebaseMessaging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,6 +79,7 @@
 				4B5E6E59CA80CD1DBDFC3C84 /* HandlaApp.swift */,
 				9517397C408B768B47CBF0E9 /* Info.plist */,
 				DEA952FA5FFFEF8677295030 /* NativeDeletionQA.swift */,
+				E4A1D1BCA6EB4D58FA4C3826 /* Notifications.swift */,
 				500D4FF9774BFE64551C53C8 /* PrivacyInfo.xcprivacy */,
 				A7ADA7AEE2B55451B1351E62 /* Store.swift */,
 				C9A6443C2D4D833A6139450B /* Views.swift */,
@@ -101,6 +106,7 @@
 			packageProductDependencies = (
 				D7CF284A6C99CCDC8979C418 /* FirebaseAuth */,
 				C216343F7E179CCFE5AE0F74 /* FirebaseFirestore */,
+				F65BCCDB7F64518C0530A45B /* FirebaseMessaging */,
 			);
 			productName = Handla;
 			productReference = E0B742DAB5463BD7B1885833 /* Handla.app */;
@@ -119,6 +125,7 @@
 						DevelopmentTeam = P92GB9QRA5;
 						ProvisioningStyle = Automatic;
 						SystemCapabilities = {
+                            com.apple.Push = { enabled = 1; };
                             com.apple.SignInWithApple = { enabled = 1; };
                             com.apple.AssociatedDomains = { enabled = 1; };
                         };
@@ -169,6 +176,7 @@
 				DC0DC6C44655A116D3ED64DC /* GroceryCatalog.swift in Sources */,
 				F03AF0F7E4E3991E91E93307 /* HandlaApp.swift in Sources */,
 				B9F60EE9B7F9FA1955EDE459 /* NativeDeletionQA.swift in Sources */,
+				C4054DB4D218AEFC39CEAFEA /* Notifications.swift in Sources */,
 				2AC22F1D5520EA878486C95C /* Store.swift in Sources */,
 				D7D1626E6428BEAFB02FD9D2 /* Views.swift in Sources */,
 			);
@@ -384,6 +392,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B2D5883E8D643AE3D060372D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
+		};
+		F65BCCDB7F64518C0530A45B /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2D5883E8D643AE3D060372D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

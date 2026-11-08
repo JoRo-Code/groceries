@@ -13,6 +13,7 @@ project = Path(__file__).resolve().parents[1] / 'Handla.xcodeproj/project.pbxpro
 source = project.read_text()
 pattern = r'SystemCapabilities = "(?:\\.|[^"\\])*";'
 replacement = '''SystemCapabilities = {
+                            com.apple.Push = { enabled = 1; };
                             com.apple.SignInWithApple = { enabled = 1; };
                             com.apple.AssociatedDomains = { enabled = 1; };
                         };'''
@@ -26,6 +27,6 @@ objects = data['objects']
 app_id = next(key for key, value in objects.items() if value.get('isa') == 'PBXNativeTarget' and value.get('name') == 'Handla')
 capabilities = objects[data['rootObject']]['attributes']['TargetAttributes'][app_id]['SystemCapabilities']
 assert isinstance(capabilities, dict), 'SystemCapabilities must be a PBX dictionary'
-for capability in ['com.apple.SignInWithApple', 'com.apple.AssociatedDomains']:
+for capability in ['com.apple.Push', 'com.apple.SignInWithApple', 'com.apple.AssociatedDomains']:
     assert str(capabilities[capability]['enabled']) == '1', f'{capability} must be enabled'
-print('Validated native Apple sign-in and Associated Domains capabilities.')
+print('Validated native Push, Apple sign-in and Associated Domains capabilities.')

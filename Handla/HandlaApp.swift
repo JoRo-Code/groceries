@@ -5,6 +5,7 @@ import FirebaseFirestore
 
 @main
 struct HandlaApp: App {
+    @UIApplicationDelegateAdaptor(AppNotificationDelegate.self) private var notificationDelegate
     @StateObject private var store: Store
     @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
     init() {
@@ -12,7 +13,7 @@ struct HandlaApp: App {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--qa-deletion-emulator") {
             let options = FirebaseOptions(googleAppID: "1:123456789:ios:abcdef0123456789", gcmSenderID: "123456789")
-            options.apiKey = "fake-emulator-key"; options.projectID = "demo-handla"
+            options.apiKey = "A" + String(repeating: "0", count: 38); options.projectID = "demo-handla"
             FirebaseApp.configure(options: options)
             Auth.auth().useEmulator(withHost: "127.0.0.1", port: 9099)
             let firestore = Firestore.firestore()
@@ -33,6 +34,7 @@ struct HandlaApp: App {
             RootView().environmentObject(store).tint(.indigo)
                 .onOpenURL { store.receive($0) }
                 .task {
+                    PushNotifications.shared.start(store: store)
                     #if DEBUG
                     if ProcessInfo.processInfo.arguments.contains("--qa-deletion-emulator") { await NativeDeletionQA.run(store: store) }
                     #endif

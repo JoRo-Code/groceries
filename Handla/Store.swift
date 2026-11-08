@@ -3,6 +3,7 @@ import Combine
 import CryptoKit
 import AuthenticationServices
 import FirebaseAuth
+import FirebaseCore
 import FirebaseFirestore
 
 struct HouseholdMember: Identifiable {
@@ -17,7 +18,12 @@ struct HouseholdMember: Identifiable {
         return parts.prefix(2).compactMap { $0.first.map(String.init) }.joined().uppercased()
     }
 }
-struct ShoppingList: Identifiable { let id: String; let name: String }
+struct ShoppingList: Identifiable {
+    let id: String
+    let name: String
+    let lastChangedAt: Date?
+    init(id: String, name: String, lastChangedAt: Date? = nil) { self.id = id; self.name = name; self.lastChangedAt = lastChangedAt }
+}
 struct Grocery: Identifiable {
     let id: String
     let name: String
@@ -58,6 +64,8 @@ final class Store: ObservableObject {
     @Published var suggestions: [GrocerySuggestion] = GroceryCatalog.builtIn
     @Published var invitation: Invitation?
     @Published var inviteURL: URL?
+    @Published var lastViewedListID: String?
+    @Published var notificationRoute: NotificationListRoute?
     private var nonce = ""
     private var currentUserID: String?
     private var sessionGeneration = 0
@@ -105,6 +113,7 @@ final class Store: ObservableObject {
                         guard !snapshot.metadata.hasPendingWrites else { return }
                         if let id = snapshot.get("workspaceID") as? String {
                             self.watchWorkspace(id)
+                            self.lastViewedListID = snapshot.get("lastViewedListID") as? String
                             self.loading = false
                         } else if !snapshot.metadata.isFromCache {
                             self.resetWorkspace()
@@ -183,6 +192,7 @@ final class Store: ObservableObject {
     private func resetWorkspace() {
         listeners.forEach { $0.remove() }; listeners = []
         workspaceID = nil; workspaceName = ""; lists = []; suggestions = GroceryCatalog.builtIn; owner = false; inviteURL = nil
+        notificationRoute = nil; lastViewedListID = nil
         memberCount = 0; members = []; attemptedIdentityFill = false; listsPending = false
     }
     private func watchWorkspace(_ id: String) {
@@ -206,7 +216,12 @@ final class Store: ObservableObject {
                 guard self.sessionGeneration == generation, self.workspaceID == id else { return }
                 if let error { self.error = error.localizedDescription; return }
                 self.listsPending = snapshot?.metadata.hasPendingWrites ?? false
-                self.lists = (snapshot?.documents ?? []).map { ShoppingList(id: $0.documentID, name: $0.get("name") as? String ?? "Lista") }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                self.lists = (snapshot?.documents ?? []).map { ShoppingList(id: $0.documentID, name: $0.get("name") as? String ?? "Lista", lastChangedAt: ($0.data(with: .estimate)["lastChangedAt"] as? Timestamp)?.dateValue()) }.sorted {
+                    let left = $0.lastChangedAt ?? .distantPast, right = $1.lastChangedAt ?? .distantPast
+                    if left != right { return left > right }
+                    let comparison = $0.name.localizedStandardCompare($1.name)
+                    return comparison == .orderedSame ? $0.id < $1.id : comparison == .orderedAscending
+                }
             }
         })
         listeners.append(ref.collection("products").addSnapshotListener { snapshot, error in
@@ -277,8 +292,9 @@ final class Store: ObservableObject {
         let batch = db.batch()
         batch.setData(["name": name, "ownerID": userID], forDocument: ref)
         batch.setData(membershipData(role: "owner"), forDocument: ref.collection("members").document(userID))
-        batch.setData(["workspaceID": ref.documentID], forDocument: db.collection("users").document(userID))
-        batch.setData(["name": "Veckohandling"], forDocument: ref.collection("lists").document())
+        let firstList = ref.collection("lists").document()
+        batch.setData(["workspaceID": ref.documentID, "lastViewedListID": firstList.documentID], forDocument: db.collection("users").document(userID))
+        batch.setData(["name": "Veckohandling", "lastChangedAt": FieldValue.serverTimestamp()], forDocument: firstList)
         try await batch.commit()
     }
     func createInvite() async throws {
@@ -358,20 +374,19 @@ final class Store: ObservableObject {
         let workspaceID = try requireWorkspace()
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 80 else { throw HandlaError.message("Ange ett namn med högst 80 tecken.") }
-        let generation = sessionGeneration
-        db.collection("workspaces").document(workspaceID).collection("lists").addDocument(data: ["name": name]) { [weak self] error in
-            Task { @MainActor [weak self] in
-                guard let self, self.sessionGeneration == generation else { return }
-                if let error { self.error = error.localizedDescription }
-            }
-        }
+        let list = db.collection("workspaces").document(workspaceID).collection("lists").document()
+        let batch = db.batch()
+        batch.setData(["name": name, "lastChangedAt": FieldValue.serverTimestamp()], forDocument: list)
+        batch.updateData(["lastViewedListID": list.documentID], forDocument: db.collection("users").document(try uid))
+        commitItemBatch(batch)
     }
+
     func renameList(_ id: String, name: String) throws {
         let workspaceID = try requireWorkspace()
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 80 else { throw HandlaError.message("Ange ett namn med högst 80 tecken.") }
         let generation = sessionGeneration
-        db.collection("workspaces").document(workspaceID).collection("lists").document(id).updateData(["name": name]) { [weak self] error in
+        db.collection("workspaces").document(workspaceID).collection("lists").document(id).updateData(["name": name, "lastChangedAt": FieldValue.serverTimestamp()]) { [weak self] error in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionGeneration == generation else { return }
                 if let error { self.error = error.localizedDescription }
@@ -389,8 +404,11 @@ final class Store: ObservableObject {
         guard !name.isEmpty, name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Ange ett varunamn på högst 120 tecken och en mängd på högst 80 tecken.") }
         let key = SHA256.hash(data: Data(GroceryCatalog.normalized(name).utf8)).map { String(format: "%02x", $0) }.joined()
         let batch = db.batch()
-        batch.setData(["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "checked": false, "category": category.rawValue, "createdAt": FieldValue.serverTimestamp(), "checkedAt": NSNull()], forDocument: items.document())
+        var data: [String: Any] = ["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "checked": false, "category": category.rawValue, "createdAt": FieldValue.serverTimestamp(), "checkedAt": NSNull()]
+        if pushDataEnabled { data["lastActorUID"] = try uid; data["lastActionAt"] = FieldValue.serverTimestamp() }
+        batch.setData(data, forDocument: items.document())
         batch.setData(["name": name, "category": category.rawValue], forDocument: db.collection("workspaces").document(workspaceID).collection("products").document(key))
+        batch.updateData(["lastChangedAt": FieldValue.serverTimestamp()], forDocument: db.collection("workspaces").document(workspaceID).collection("lists").document(listID))
         let generation = sessionGeneration
         batch.commit { [weak self] error in
             Task { @MainActor [weak self] in
@@ -409,6 +427,7 @@ final class Store: ObservableObject {
         let batch = db.batch()
         batch.updateData(["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "category": category.rawValue], forDocument: items.document(id))
         batch.setData(["name": name, "category": category.rawValue], forDocument: db.collection("workspaces").document(workspaceID).collection("products").document(key))
+        batch.updateData(["lastChangedAt": FieldValue.serverTimestamp()], forDocument: db.collection("workspaces").document(workspaceID).collection("lists").document(listID))
         let generation = sessionGeneration
         batch.commit { [weak self] error in
             Task { @MainActor [weak self] in
@@ -417,7 +436,48 @@ final class Store: ObservableObject {
             }
         }
     }
-    func signOut() throws {
+    private var pushDataEnabled: Bool {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--qa-deletion-emulator"), ProcessInfo.processInfo.arguments.contains("--qa-push-data"), FirebaseApp.app()?.options.projectID == "demo-handla" { return true }
+#endif
+        return Bundle.main.object(forInfoDictionaryKey: "HandlaPushEnabled") as? Bool == true
+    }
+    func rememberViewedList(_ id: String) throws {
+        _ = try requireWorkspace()
+        let userID = try uid
+        let generation = sessionGeneration
+        db.collection("users").document(userID).updateData(["lastViewedListID": id]) { [weak self] error in
+            Task { @MainActor [weak self] in guard let self, self.sessionGeneration == generation else { return }; if let error { self.error = error.localizedDescription } }
+        }
+    }
+    func setItemChecked(_ id: String, checked: Bool, listID: String) throws {
+        let workspaceID = try requireWorkspace()
+        guard let items = itemsRef(listID) else { return }
+        var update: [String: Any] = ["checked": checked]
+        if pushDataEnabled { update["lastActorUID"] = try uid; update["lastActionAt"] = FieldValue.serverTimestamp() }
+        if checked { update["checkedAt"] = FieldValue.serverTimestamp() }
+        let batch = db.batch()
+        batch.updateData(update, forDocument: items.document(id))
+        batch.updateData(["lastChangedAt": FieldValue.serverTimestamp()], forDocument: db.collection("workspaces").document(workspaceID).collection("lists").document(listID))
+        commitItemBatch(batch)
+    }
+    func deleteItem(_ id: String, listID: String) throws {
+        let workspaceID = try requireWorkspace()
+        guard let items = itemsRef(listID) else { return }
+        let batch = db.batch()
+        batch.deleteDocument(items.document(id))
+        batch.updateData(["lastChangedAt": FieldValue.serverTimestamp()], forDocument: db.collection("workspaces").document(workspaceID).collection("lists").document(listID))
+        commitItemBatch(batch)
+    }
+    private func commitItemBatch(_ batch: WriteBatch) {
+        let generation = sessionGeneration
+        batch.commit { [weak self] error in
+            Task { @MainActor [weak self] in guard let self, self.sessionGeneration == generation else { return }; if let error { self.error = error.localizedDescription } }
+        }
+    }
+    func signOut() async throws {
+        do { try await PushNotifications.shared.prepareForSignOut() }
+        catch { throw HandlaError.message("Kunde inte koppla från enhetens notiser. Kontrollera internetanslutningen och försök logga ut igen.") }
         try Auth.auth().signOut()
         sessionGeneration += 1
         sessionID = UUID()
@@ -491,6 +551,9 @@ extension Store {
                 throw HandlaError.message("Kontots inloggningsmetod stöds inte av denna appversion. Raderingen har inte påbörjats.")
             }
             _ = try await user.getIDTokenResult(forcingRefresh: true)
+            let profile = db.collection("users").document(user.uid)
+            if pushDataEnabled, try await profile.getDocument(source: .server).exists { try await profile.updateData(["deletingAccount": true]) }
+            try await PushNotifications.shared.prepareForAccountDeletion()
             try await removeAccountData(plan)
             // Auth is last: if it fails, the signed-in user can retry from onboarding without orphaned data.
             resetWorkspace()
@@ -508,6 +571,7 @@ extension Store {
         let userID = try uid
         guard userID == plan.userID else { throw HandlaError.message("Kontot har ändrats. Öppna raderingen igen.") }
         let profile = db.collection("users").document(userID)
+        if pushDataEnabled { try await purgeCollection(profile.collection("devices")) }
         guard let workspaceID = plan.workspaceID else {
             let current = try await profile.getDocument(source: .server)
             guard current.get("workspaceID") == nil else { throw HandlaError.message("Ditt hushåll har ändrats. Öppna raderingen igen.") }
@@ -517,6 +581,7 @@ extension Store {
         let workspace = db.collection("workspaces").document(workspaceID)
         let ownMember = workspace.collection("members").document(userID)
         if !plan.owner {
+            try await scrubActorIdentity(workspace: workspace, userID: userID)
             _ = try await db.runTransaction { transaction, errorPointer in
                 do {
                     let current = try transaction.getDocument(workspace)
@@ -548,10 +613,14 @@ extension Store {
         let members = try await workspace.collection("members").getDocuments(source: .server)
         let successor = members.documents.filter { $0.documentID != userID }.sorted { $0.documentID < $1.documentID }.first
         guard successor?.documentID == plan.successorID else {
-            try await workspace.updateData(["deletingBy": FieldValue.delete()])
+            let unlock = db.batch()
+            unlock.updateData(["deletingBy": FieldValue.delete()], forDocument: workspace)
+            if pushDataEnabled { unlock.updateData(["deletingAccount": FieldValue.delete()], forDocument: profile) }
+            try await unlock.commit()
             throw HandlaError.message("Medlemmarna har ändrats. Öppna raderingen igen för att bekräfta den nya ägaren. Den tidigare inbjudningslänken har återkallats.")
         }
         if let successor {
+            try await scrubActorIdentity(workspace: workspace, userID: userID)
             _ = try await db.runTransaction { transaction, errorPointer in
                 do {
                     let current = try transaction.getDocument(workspace)
@@ -580,6 +649,19 @@ extension Store {
             let batch = db.batch()
             batch.deleteDocument(ownMember); batch.deleteDocument(profile); batch.deleteDocument(workspace)
             try await batch.commit()
+        }
+    }
+    private func scrubActorIdentity(workspace: DocumentReference, userID: String) async throws {
+        guard pushDataEnabled else { return }
+        let lists = try await workspace.collection("lists").getDocuments(source: .server)
+        for list in lists.documents {
+            while true {
+                let page = try await list.reference.collection("items").whereField("lastActorUID", isEqualTo: userID).limit(to: 200).getDocuments(source: .server)
+                if page.isEmpty { break }
+                let batch = db.batch()
+                for item in page.documents { batch.updateData(["lastActorUID": FieldValue.delete(), "lastActionAt": FieldValue.delete()], forDocument: item.reference) }
+                try await batch.commit()
+            }
         }
     }
     private func purgeCollection(_ collection: CollectionReference) async throws {

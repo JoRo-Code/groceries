@@ -26,6 +26,8 @@ targets:
         TARGETED_DEVICE_FAMILY: '1'
     attributes:
       SystemCapabilities:
+        com.apple.Push:
+          enabled: 1
         com.apple.SignInWithApple:
           enabled: 1
         com.apple.AssociatedDomains:
@@ -36,13 +38,17 @@ targets:
       properties:
         CFBundleDisplayName: Handla
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "6"
+        FirebaseMessagingAutoInitEnabled: false
+        FirebaseAppDelegateProxyEnabled: false
+        HandlaPushEnabled: false
         UILaunchScreen: {}
         InviteHost: $(INVITE_HOST)
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
     entitlements:
       path: Handla/Handla.entitlements
       properties:
+        aps-environment: development
         com.apple.developer.applesignin: [Default]
         com.apple.developer.associated-domains: ['applinks:$(INVITE_HOST)']
     dependencies:
@@ -50,3 +56,5 @@ targets:
         product: FirebaseAuth
       - package: Firebase
         product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseMessaging
