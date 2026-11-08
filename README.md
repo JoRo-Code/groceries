@@ -9,7 +9,7 @@ E-post, Google och Apple är aktiverade i Firebase och webbappen. Google- och Ap
 ## Första versionen
 
 - Logga in med e-post/lösenord (eller en aktiverad social leverantör), skapa ett hushåll eller anslut med inbjudningslänk.
-- Ett hushåll per konto; alla medlemmar delar listor och sparade varuförslag.
+- Ett hushåll per konto; alla medlemmar delar listor och sparade varuförslag. Medlemsvyn visar namn (e-post om namn saknas), ägare/medlem och vem som är du. Uppgifterna är bara synliga inom hushållet.
 - Flera listor, varor med redigerbar mängd och kategori, avbockning och borttagning av varor. Avbockade varor från senaste dygnet ligger kvar överstrukna; äldre köp hämtas i sidor om 20. Varudetaljer visar tillagd och senast avbockad tid. Återställning behåller senaste köpdatumet.
 - 309 vanliga svenska mat- och hushållsvaror finns inbyggda från start. Förslag matchar utan hänsyn till versaler eller accenter och visar prefixträffar först. Hushållets egna varor och kategorival kompletterar katalogen.
 - Färgade vänsterkanter visar varornas kategori, med gemensam gruppering i listan.
@@ -55,7 +55,7 @@ På Homebrew kan Java 21 väljas med `export JAVA_HOME=/opt/homebrew/opt/openjdk
 
 Testerna kontrollerar åtkomst för utomstående, atomiskt skapande, medlemskap via giltig inbjudan, utgångna/förfalskade/ersatta länkar och att medlemmen inte kan höja sin behörighet. Kategoritester täcker giltiga kategorier, avvisade ogiltiga värden och äldre dokument utan kategori.
 
-Katalogen har också [19 fristående kontroller](qa/catalogue/README.md) som körs utan Firebase. Firebase-sviten omfattar 22 testfall, inklusive oföränderliga datum och säker migrering av äldre dokument. Se [historik och migrering](firebase/HISTORY_MIGRATION.md). Se [qa/build-result.md](qa/build-result.md) för verifieringens omfattning.
+Katalogen har också [19 fristående kontroller](qa/catalogue/README.md) som körs utan Firebase. Firebase-sviten omfattar 23 testfall, inklusive oföränderliga datum och säker migrering av äldre dokument. Se [historik och migrering](firebase/HISTORY_MIGRATION.md). Se [qa/build-result.md](qa/build-result.md) för verifieringens omfattning.
 
 I ett Debug-bygge kan launch-argumentet `--preview-shopping` visa exempeldata för visuell kontroll utan Firebase. Vyn är märkt som förhandsvisning och gör inga molnskrivningar.
 

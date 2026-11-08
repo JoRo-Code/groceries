@@ -9,7 +9,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     private var shoppingPreview: Bool {
         #if DEBUG
-        ["--preview-shopping", "--preview-lists", "--preview-add", "--preview-history", "--preview-details"].contains(where: ProcessInfo.processInfo.arguments.contains)
+        ["--preview-shopping", "--preview-lists", "--preview-add", "--preview-history", "--preview-details", "--preview-members"].contains(where: ProcessInfo.processInfo.arguments.contains)
         #else
         false
         #endif
@@ -173,17 +173,39 @@ struct ListsView: View {
 }
 
 struct WorkspaceView: View {
+    var preview = false
+    private var sampleMembers: [HouseholdMember] {
+        [HouseholdMember(id: "sample-owner", role: "owner", displayName: "Alex Andersson", isCurrentUser: true),
+         HouseholdMember(id: "sample-member", role: "member", displayName: "Sam Svensson", isCurrentUser: false)]
+    }
+    private var roster: [HouseholdMember] { preview ? sampleMembers : store.members }
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             Form {
                 Section("Hushåll") {
-                    Label(store.workspaceName, systemImage: "house.fill")
-                    Text("\(store.memberCount) \(store.memberCount == 1 ? "medlem" : "medlemmar")").foregroundStyle(.secondary)
+                    Label(preview ? "Exempelhushållet" : store.workspaceName, systemImage: "house.fill")
+                    Text("\(roster.count) \(roster.count == 1 ? "medlem" : "medlemmar")").foregroundStyle(.secondary)
                     Text("Alla medlemmar kan lägga till varor, bocka av och skapa listor.").foregroundStyle(.secondary)
                 }
-                if store.owner {
+                Section("Medlemmar") {
+                    ForEach(roster) { member in
+                        HStack(spacing: 12) {
+                            Text(member.initials).font(.headline).foregroundStyle(handlaBlue)
+                                .frame(width: 42, height: 42).background(handlaBlue.opacity(0.12), in: Circle())
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(member.name).font(.body.weight(.medium))
+                                Text(member.role == "owner" ? "Ägare" : "Medlem").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if member.isCurrentUser { Text("Du").font(.caption.weight(.semibold)).foregroundStyle(handlaBlue) }
+                        }.padding(.vertical, 3)
+                    }
+                    if roster.isEmpty { Text("Hämtar medlemmar…").foregroundStyle(.secondary) }
+                    if preview { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
+                }
+                if store.owner && !preview {
                     Section {
                         if let url = store.inviteURL {
                             ShareLink(item: url) { Label("Dela inbjudan", systemImage: "square.and.arrow.up") }
@@ -195,7 +217,7 @@ struct WorkspaceView: View {
                     }
                 }
                 if let error = store.error { Section { Text(error).foregroundStyle(.red) } }
-                Button("Logga ut") { do { try store.signOut(); dismiss() } catch { store.error = error.localizedDescription } }.disabled(store.busy)
+                if !preview { Button("Logga ut") { do { try store.signOut(); dismiss() } catch { store.error = error.localizedDescription } }.disabled(store.busy) }
             }.navigationTitle("Ert hushåll").toolbar { Button("Klart") { dismiss() } }
         }
     }
@@ -487,17 +509,11 @@ struct ItemsView: View {
                 } else { try store.updateItem(item.id, name: name, quantity: quantity, category: category, listID: list.id) }
             }.tint(handlaBlue)
         }
-        .sheet(isPresented: $showingWorkspace) {
-            if preview {
-                NavigationStack {
-                    ContentUnavailableView("Ert hushåll", systemImage: "person.2", description: Text("Här bjuder du in familjen i den riktiga appen."))
-                        .toolbar { Button("Klart") { showingWorkspace = false } }
-                }
-            } else { WorkspaceView() }
-        }
+        .sheet(isPresented: $showingWorkspace) { WorkspaceView(preview: preview) }
         .onAppear {
             if !preview { observation.start(store: store, listID: list.id) }
             #if DEBUG
+            if preview && ProcessInfo.processInfo.arguments.contains("--preview-members") { showingWorkspace = true }
             if preview && ProcessInfo.processInfo.arguments.contains("--preview-history") { previewHistoryCount = 20 }
             if preview && ProcessInfo.processInfo.arguments.contains("--preview-details") { editing = exampleItems.first(where: { $0.id == "bread" }) }
             #endif

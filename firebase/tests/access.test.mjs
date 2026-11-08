@@ -218,3 +218,19 @@ test('legacy documents remain readable and editable without forged dates',async(
  await assertFails(updateDoc(ref,{checked:true}));
  await assertSucceeds(updateDoc(ref,{checked:true,checkedAt:serverTimestamp()}));
 });
+
+test('household member identities are shared only inside workspace and self updates cannot change roles',async()=>{
+ await create();await invite();await join();
+ const owner=db('owner'),guest=db('guest');
+ await assertSucceeds(updateDoc(doc(owner,'workspaces/home/members/owner'),{displayName:'Anna'}));
+ await assertSucceeds(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:'Robin'}));
+ const members=await assertSucceeds(getDocs(collection(owner,'workspaces/home/members')));
+ assert.deepEqual(members.docs.map(d=>d.data().displayName).sort(),['Anna','Robin']);
+ await assertFails(getDocs(collection(db('outsider'),'workspaces/home/members')));
+ await assertFails(updateDoc(doc(guest,'workspaces/home/members/owner'),{displayName:'Fake'}));
+ await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:'Fake',role:'owner'}));
+ await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{inviteToken:'b'.repeat(72)}));
+ await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:''}));
+ await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:'x'.repeat(161)}));
+ await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:'Robin',email:'private@example.test'}));
+});

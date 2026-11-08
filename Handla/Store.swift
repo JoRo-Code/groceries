@@ -5,6 +5,18 @@ import AuthenticationServices
 import FirebaseAuth
 import FirebaseFirestore
 
+struct HouseholdMember: Identifiable {
+    let id: String
+    let role: String
+    let displayName: String?
+    let isCurrentUser: Bool
+    var name: String { displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? displayName! : "Namnlös medlem" }
+    var initials: String {
+        guard let displayName, !displayName.isEmpty else { return "?" }
+        let parts = displayName.split(separator: "@", maxSplits: 1).first?.split(separator: " ") ?? []
+        return parts.prefix(2).compactMap { $0.first.map(String.init) }.joined().uppercased()
+    }
+}
 struct ShoppingList: Identifiable { let id: String; let name: String }
 struct Grocery: Identifiable {
     let id: String
@@ -32,6 +44,8 @@ final class Store: ObservableObject {
     @Published var signedIn = false
     @Published private(set) var sessionID = UUID()
     @Published var memberCount = 0
+    @Published var members: [HouseholdMember] = []
+    private var attemptedIdentityFill = false
     @Published var listsPending = false
     @Published var loading = false
     @Published var busy = false
@@ -166,7 +180,7 @@ final class Store: ObservableObject {
     private func resetWorkspace() {
         listeners.forEach { $0.remove() }; listeners = []
         workspaceID = nil; workspaceName = ""; lists = []; suggestions = GroceryCatalog.builtIn; owner = false; inviteURL = nil
-        memberCount = 0; listsPending = false
+        memberCount = 0; members = []; attemptedIdentityFill = false; listsPending = false
     }
     private func watchWorkspace(_ id: String) {
         guard workspaceID != id else { return }
@@ -209,9 +223,41 @@ final class Store: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.sessionGeneration == generation, self.workspaceID == id else { return }
                 if let error { self.error = error.localizedDescription; return }
-                self.memberCount = snapshot?.documents.count ?? 0
+                let documents = snapshot?.documents ?? []
+                self.members = documents.map { document in
+                    HouseholdMember(id: document.documentID, role: document.get("role") as? String ?? "member",
+                        displayName: document.get("displayName") as? String, isCurrentUser: document.documentID == self.currentUserID)
+                }.sorted { lhs, rhs in
+                    if lhs.role != rhs.role { return lhs.role == "owner" }
+                    return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                }
+                self.memberCount = self.members.count
+                if !self.attemptedIdentityFill, let identity = self.memberIdentity,
+                   let own = documents.first(where: { $0.documentID == self.currentUserID }),
+                   (own.get("displayName") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                    self.attemptedIdentityFill = true
+                    own.reference.updateData(["displayName": identity]) { [weak self] error in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.sessionGeneration == generation, self.workspaceID == id else { return }
+                            if let error { self.error = error.localizedDescription }
+                        }
+                    }
+                }
             }
         })
+    }
+    private var memberIdentity: String? {
+        guard let user = Auth.auth().currentUser else { return nil }
+        for candidate in [user.displayName, user.email] {
+            if let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return String(name.prefix(160)) }
+        }
+        return nil
+    }
+    private func membershipData(role: String, inviteToken: String? = nil) -> [String: Any] {
+        var data: [String: Any] = ["role": role]
+        if let inviteToken { data["inviteToken"] = inviteToken }
+        if let name = memberIdentity { data["displayName"] = name }
+        return data
     }
     private func requireWorkspace() throws -> String {
         guard let workspaceID else { throw HandlaError.message("Öppna ett hushåll först.") }
@@ -227,7 +273,7 @@ final class Store: ObservableObject {
         let ref = db.collection("workspaces").document()
         let batch = db.batch()
         batch.setData(["name": name, "ownerID": userID], forDocument: ref)
-        batch.setData(["role": "owner"], forDocument: ref.collection("members").document(userID))
+        batch.setData(membershipData(role: "owner"), forDocument: ref.collection("members").document(userID))
         batch.setData(["workspaceID": ref.documentID], forDocument: db.collection("users").document(userID))
         batch.setData(["name": "Veckohandling"], forDocument: ref.collection("lists").document())
         try await batch.commit()
@@ -301,7 +347,7 @@ final class Store: ObservableObject {
         let userID = try uid
         _ = try await db.collection("invites").document(invite.id).getDocument(source: .server)
         let batch = db.batch()
-        batch.setData(["role": "member", "inviteToken": invite.id], forDocument: db.collection("workspaces").document(invite.workspaceID).collection("members").document(userID))
+        batch.setData(membershipData(role: "member", inviteToken: invite.id), forDocument: db.collection("workspaces").document(invite.workspaceID).collection("members").document(userID))
         batch.setData(["workspaceID": invite.workspaceID], forDocument: db.collection("users").document(userID))
         try await batch.commit(); dismissInvite()
     }

@@ -15,6 +15,7 @@ service cloud.firestore {
         'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'
       ]);
     }
+    function validIdentity(data) { return !('displayName' in data) || text(data.displayName,160); }
     function unassigned() { return !exists(userPath()); }
     function validInvite(w, token) {
       let invite = get(/databases/$(database)/documents/invites/$(token));
@@ -40,12 +41,16 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteToken']);
       match /members/{uid} {
         allow read: if member(w);
+        allow update: if member(w) && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
+          && text(request.resource.data.displayName,160);
         allow create: if signedIn() && uid == request.auth.uid && unassigned()
           && getAfter(userPath()).data.workspaceID == w
-          && ((request.resource.data.keys().hasOnly(['role'])
+          && validIdentity(request.resource.data)
+          && ((request.resource.data.keys().hasOnly(['role', 'displayName'])
                && request.resource.data.role == 'owner'
                && getAfter(workspacePath(w)).data.ownerID == request.auth.uid)
-            || (request.resource.data.keys().hasOnly(['role', 'inviteToken'])
+            || (request.resource.data.keys().hasOnly(['role', 'inviteToken', 'displayName'])
                && request.resource.data.role == 'member'
                && validInvite(w, request.resource.data.inviteToken)));
       }

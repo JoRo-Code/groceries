@@ -9,6 +9,7 @@ import {
   getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField, serverTimestamp, query, where, orderBy, documentId, limit, startAfter, getDocsFromServer,
 } from 'firebase/firestore';
 
+export const memberDisplayName = user => (user?.displayName?.trim() || user?.email?.trim() || '').slice(0,160);
 export const categoryIDs = ['produce', 'dairy', 'meat', 'fish', 'bakery', 'pantry', 'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'];
 export const normalizeName = value => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('sv-SE').trim().replace(/\s+/gu, ' ');
 export async function productID(name) {
@@ -67,6 +68,21 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     callback(snapshot.docs.map(d => ({ id: d.id, ...d.data({serverTimestamps: 'estimate'}) })), metadata(snapshot));
   }, error);
 
+  const identitySync = new Map();
+  const syncMemberIdentity = workspaceID => {
+    const user=auth.currentUser,name=memberDisplayName(user);
+    if(!user||!name)return Promise.resolve();
+    const key=`${user.uid}/${workspaceID}`;
+    if(identitySync.has(key))return identitySync.get(key);
+    const operation=(async()=>{
+      const ref=doc(workspace(workspaceID),'members',user.uid);
+      const snapshot=await getDocFromServer(ref);
+      if(auth.currentUser?.uid!==user.uid||!snapshot.exists()||snapshot.data().displayName)return;
+      await queued(updateDoc(ref,{displayName:name}));
+    })().catch(error=>{identitySync.delete(key);throw error});
+    identitySync.set(key,operation);return operation;
+  };
+
   const providerLogin = async provider => {
     try { return await signInWithPopup(auth, provider); }
     catch (error) {
@@ -84,7 +100,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
   };
   return {
     hasPendingWrites: () => pendingWrites > 0,
-    app, auth, db,
+    app, auth, db, syncMemberIdentity,
     signInWithGoogle: () => {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
@@ -108,7 +124,10 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     watchProfile: (userID, callback, error) => watchDoc(doc(db, 'users', userID), (profile, meta) => {
       // Membership is granted atomically with this profile. Do not start protected
       // household listeners from a local profile before the server accepts the batch.
-      if (!meta.hasPendingWrites) callback(profile, meta);
+      if (!meta.hasPendingWrites) {
+        callback(profile, meta);
+        if(profile?.workspaceID&&auth.currentUser?.uid===userID)syncMemberIdentity(profile.workspaceID).catch(failure=>{if(auth.currentUser?.uid===userID)error?.(failure)});
+      }
     }, error),
     watchWorkspace: (id, callback, error) => watchDoc(workspace(id), callback, error),
     watchLists: (id, callback, error) => watchCollection(collection(workspace(id), 'lists'), callback, error),
@@ -153,7 +172,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       if ((await getDocFromServer(profile)).exists()) throw new Error('Du tillhör redan ett hushåll.');
       const ref = doc(collection(db, 'workspaces')), batch = writeBatch(db);
       batch.set(ref, { name, ownerID: userID });
-      batch.set(doc(ref, 'members', userID), { role: 'owner' });
+      batch.set(doc(ref, 'members', userID), { role: 'owner', ...(memberDisplayName(auth.currentUser)?{displayName:memberDisplayName(auth.currentUser)}:{}) });
       batch.set(profile, { workspaceID: ref.id });
       batch.set(doc(collection(ref, 'lists')), { name: 'Veckohandling' });
       await queued(batch.commit());
@@ -175,7 +194,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
         throw new Error('Du tillhör redan ett annat hushåll. Byte stöds inte ännu.');
       }
       const batch = writeBatch(db);
-      batch.set(doc(workspace(invitation.workspaceID), 'members', userID), { role: 'member', inviteToken: token });
+      batch.set(doc(workspace(invitation.workspaceID), 'members', userID), { role: 'member', inviteToken: token, ...(memberDisplayName(auth.currentUser)?{displayName:memberDisplayName(auth.currentUser)}:{}) });
       batch.set(profile, { workspaceID: invitation.workspaceID });
       await queued(batch.commit());
       return invitation.workspaceID;

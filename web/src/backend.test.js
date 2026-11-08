@@ -39,6 +39,13 @@ test('two users share lists, edit without losing checkoff, remember categories, 
     assert.equal((await guest.getInvite(token)).workspaceID, workspaceID);
     assert.equal(await guest.joinWorkspace(token), workspaceID);
     assert.equal(await guest.joinWorkspace(token), workspaceID);
+    const roster=await new Promise((resolve,reject)=>{let stop=()=>{};stop=owner.watchMembers(workspaceID,values=>{if(values.length===2){stop();resolve(values)}},reject)});
+    assert.deepEqual(roster.map(member=>member.displayName).sort(),[`owner-${stamp}@example.test`,`guest-${stamp}@example.test`].sort());
+    const guestMember=doc(guest.db,'workspaces',workspaceID,'members',guest.auth.currentUser.uid);
+    const legacyPath=`projects/demo-handla/databases/(default)/documents/workspaces/${workspaceID}/members/${guest.auth.currentUser.uid}`;
+    const seeded=await fetch('http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents:commit',{method:'POST',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({writes:[{update:{name:legacyPath,fields:{}},updateMask:{fieldPaths:['displayName']}}]})});assert.equal(seeded.status,200);
+    await guest.syncMemberIdentity(workspaceID);
+    assert.equal((await getDoc(guestMember)).data().displayName,`guest-${stamp}@example.test`);
     const listID=await guest.addList(workspaceID,'Helg');
     await guest.renameList(workspaceID,listID,'  Helgmat  ');
     assert.equal((await getDoc(doc(owner.db,'workspaces',workspaceID,'lists',listID))).data().name,'Helgmat');
