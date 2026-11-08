@@ -158,7 +158,12 @@ struct ListsView: View {
             } else if let selected {
                 ItemsView(list: selected, listCount: lists.count, preview: preview,
                     exampleItems: Binding(get: { exampleItems[selected.id] ?? [] }, set: { exampleItems[selected.id] = $0 }),
-                    showAddInitially: showAddInitially, onShowLists: { showingOverview = true })
+                    showAddInitially: showAddInitially, onShowLists: { showingOverview = true }, onRename: { name in
+                        selectedID = selected.id
+                        if preview, let index = exampleLists.firstIndex(where: { $0.id == selected.id }) {
+                            exampleLists[index] = ShoppingList(id: selected.id, name: name)
+                        } else { try store.renameList(selected.id, name: name) }
+                    })
                     .id(selected.id)
             }
         }
@@ -253,14 +258,18 @@ struct ItemsView: View {
     let preview: Bool
     @Binding var exampleItems: [Grocery]
     let onShowLists: () -> Void
+    let onRename: (String) throws -> Void
     @StateObject private var observation = GroceryObservation()
     @State private var adding: Bool
+    @State private var revealName: String?
+    @State private var renaming = false
+    @State private var renamedList = ""
     @State private var editing: Grocery?
     @State private var showingWorkspace = false
 
-    init(list: ShoppingList, listCount: Int, preview: Bool, exampleItems: Binding<[Grocery]>, showAddInitially: Bool = false, onShowLists: @escaping () -> Void) {
+    init(list: ShoppingList, listCount: Int, preview: Bool, exampleItems: Binding<[Grocery]>, showAddInitially: Bool = false, onShowLists: @escaping () -> Void, onRename: @escaping (String) throws -> Void) {
         self.list = list; self.listCount = listCount; self.preview = preview
-        _exampleItems = exampleItems; self.onShowLists = onShowLists
+        _exampleItems = exampleItems; self.onShowLists = onShowLists; self.onRename = onRename
         _adding = State(initialValue: showAddInitially)
     }
     private var items: [Grocery] { preview ? exampleItems : observation.items }
@@ -280,6 +289,7 @@ struct ItemsView: View {
                     Image(systemName: "person.2").font(.system(size: 24, weight: .light)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Hushållets medlemmar")
                 Menu {
+                    Button("Byt namn", systemImage: "pencil") { renamedList = list.name; renaming = true }
                     Button("Mina listor", systemImage: "list.bullet") { onShowLists() }
                     Button("Ert hushåll", systemImage: "person.2") { showingWorkspace = true }
                 } label: {
@@ -287,6 +297,7 @@ struct ItemsView: View {
                 }.accessibilityLabel("Fler alternativ")
             }.foregroundStyle(handlaBlue).padding(.horizontal, 14).padding(.top, 3)
             GeometryReader { geometry in
+                ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
                         VStack(alignment: .leading, spacing: 16) {
@@ -326,14 +337,34 @@ struct ItemsView: View {
                         }
                     }.frame(minHeight: geometry.size.height, alignment: .top)
                 }.scrollIndicators(.hidden)
+                .task(id: "\(adding)-\(revealName ?? "")-\(items.first(where: { GroceryCatalog.normalized($0.name) == revealName && !$0.checked })?.id ?? "")") {
+                    guard !adding, let name = revealName,
+                          let item = items.first(where: { GroceryCatalog.normalized($0.name) == name && !$0.checked }) else { return }
+                    withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(item.id, anchor: .center) }
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    if revealName == name { withAnimation { revealName = nil } }
+                }
+                }
             }
         }
         .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
         .tint(handlaBlue)
         .navigationDestination(isPresented: $adding) {
-            AddGroceriesView(list: list, preview: preview, exampleItems: $exampleItems)
+            AddGroceriesView(list: list, preview: preview, exampleItems: $exampleItems) { name in
+                revealName = GroceryCatalog.normalized(name)
+                adding = false
+            }
         }
+        .alert("Byt namn på listan", isPresented: $renaming) {
+            TextField("Listans namn", text: $renamedList)
+            Button("Avbryt", role: .cancel) { }
+            Button("Spara") {
+                let name = renamedList.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty, name.count <= 80 else { return }
+                do { try onRename(name) } catch { store.error = error.localizedDescription }
+            }.disabled(renamedList.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || renamedList.trimmingCharacters(in: .whitespacesAndNewlines).count > 80)
+        } message: { Text("Ange ett namn med 1–80 tecken.") }
         .sheet(item: $editing) { item in
             GroceryEditor(item: item) { name, quantity, category in
                 if preview {
@@ -372,6 +403,8 @@ struct ItemsView: View {
             }.buttonStyle(.plain).accessibilityLabel("Ändra \(item.name), mängd \(item.quantity)")
         }
         .frame(minHeight: 58)
+        .background(revealName == GroceryCatalog.normalized(item.name) ? handlaBlue.opacity(0.17) : Color.clear)
+        .id(item.id)
         .overlay(alignment: .bottom) { DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).padding(.leading, 24).foregroundStyle(Color.gray.opacity(0.27)) }
         .contextMenu {
             Button("Ändra vara", systemImage: "pencil") { editing = item }
@@ -478,6 +511,7 @@ private struct AddGroceriesView: View {
     let list: ShoppingList
     let preview: Bool
     @Binding var exampleItems: [Grocery]
+    let onAdded: (String) -> Void
     @StateObject private var observation = GroceryObservation()
     @State private var query = ""
     @State private var quantity = ""
@@ -577,6 +611,8 @@ private struct AddGroceriesView: View {
                     }
                 }
             }
+            focused = false
+            onAdded(existing.name)
             return
         }
         do {
@@ -584,7 +620,8 @@ private struct AddGroceriesView: View {
                 guard name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Varunamnet eller mängden är för långt.") }
                 exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category))
             } else { try store.addItem(name, quantity: quantity, category: category, listID: list.id) }
-            quantity = ""
+            focused = false
+            onAdded(name)
         } catch { store.error = error.localizedDescription }
     }
 }

@@ -314,6 +314,18 @@ final class Store: ObservableObject {
             }
         }
     }
+    func renameList(_ id: String, name: String) throws {
+        let workspaceID = try requireWorkspace()
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 80 else { throw HandlaError.message("Ange ett namn med högst 80 tecken.") }
+        let generation = sessionGeneration
+        db.collection("workspaces").document(workspaceID).collection("lists").document(id).updateData(["name": name]) { [weak self] error in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionGeneration == generation else { return }
+                if let error { self.error = error.localizedDescription }
+            }
+        }
+    }
     func itemsRef(_ listID: String) -> CollectionReference? {
         guard let workspaceID else { return nil }
         return db.collection("workspaces").document(workspaceID).collection("lists").document(listID).collection("items")
