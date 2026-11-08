@@ -15,6 +15,6 @@ The client implements the solo-member check after acquiring the lock. Firestore 
 
 Shopping items/products do not contain creator user IDs, so no author-reference anonymization is required. The old owner's identifier is removed or replaced in the workspace; personal profile/member identity is deleted. Invitation rotation already deletes the previous active token; deletion removes the active token. No blanket deletion of other users or unrelated households is performed.
 
-Validation: 25 security-rule cases, including normal preexisting flows and lock/transfer/leave/retry cases, and 4 backend cases including a 206-item multi-batch purge and preserved shared lists. Native SDK tests are separately recorded by the native release agent. No production user account has been deleted as part of development tests.
+Validation: 25 security-rule cases, including normal preexisting flows and lock/transfer/leave/retry cases, and 4 backend cases including a 206-item multi-batch purge and preserved shared lists. Native SDK tests are separately recorded by the native release agent. No existing customer account has been deleted. Earlier live smoke cleanup targeted only its own isolated synthetic test accounts; account-deletion development tests run against emulators.
 
 Sources: [Firebase Apple revocation](https://firebase.google.com/docs/auth/ios/apple#token_revocation), [Apple account deletion requirement](https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion).
