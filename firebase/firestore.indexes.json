@@ -1,0 +1,1 @@
+{"indexes":[{"collectionGroup":"items","queryScope":"COLLECTION","fields":[{"fieldPath":"checked","order":"ASCENDING"},{"fieldPath":"checkedAt","order":"DESCENDING"}]},{"collectionGroup":"items","queryScope":"COLLECTION","fields":[{"fieldPath":"checked","order":"ASCENDING"},{"fieldPath":"checkedAt","order":"ASCENDING"}]}],"fieldOverrides":[]}

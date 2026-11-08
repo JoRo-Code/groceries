@@ -208,19 +208,25 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       uid(); name = displayName(name);
       return queued(updateDoc(list(workspaceID, listID), { name }));
     },
-    async addItem(workspaceID, listID, data) {
-      uid(); const values = validateGrocery(data), key = await productID(values.name);
-      const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
-      batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null });
-      batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
-      await queued(batch.commit()); return ref.id;
+    addItem(workspaceID, listID, data) {
+      uid(); const values = validateGrocery(data);
+      return queued((async () => {
+        const key = await productID(values.name);
+        const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
+        batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null });
+        batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
+        await batch.commit(); return ref.id;
+      })());
     },
-    async updateItem(workspaceID, listID, itemID, data) {
-      uid(); const values = validateGrocery(data), key = await productID(values.name), batch = writeBatch(db);
-      // Never overwrite checked: another shopper may have changed it while this editor was open.
-      batch.update(item(workspaceID, listID, itemID), values);
-      batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
-      return queued(batch.commit());
+    updateItem(workspaceID, listID, itemID, data) {
+      uid(); const values = validateGrocery(data);
+      return queued((async () => {
+        const key = await productID(values.name), batch = writeBatch(db);
+        // Keep checkoff and both dates: another shopper may have changed them.
+        batch.update(item(workspaceID, listID, itemID), values);
+        batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
+        return batch.commit();
+      })());
     },
     toggleItem(workspaceID, listID, itemID, checked) {
       uid(); if (typeof checked !== 'boolean') throw new Error('Ogiltig avbockning.');

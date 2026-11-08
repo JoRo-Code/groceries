@@ -1,6 +1,7 @@
 {
   "firestore": {
-    "rules": "firestore.rules"
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "hosting": {
     "public": "hosting-dist",
@@ -32,6 +33,10 @@
           {
             "key": "Content-Security-Policy",
             "value": "default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.googleapis.com https://groceries-ros.firebaseapp.com; frame-src https://groceries-ros.firebaseapp.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
           }
         ]
       },

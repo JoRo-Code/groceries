@@ -13,7 +13,14 @@ try {
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`${base}/?demo=1`);
   const search=page.getByRole('searchbox',{name:'Sök eller lägg till vara',exact:true});
-  const openAdd=async()=>{await page.getByRole('button',{name:'Ny vara',exact:true}).click();await expect(search).toBeFocused()};
+  const openAdd=async()=>{
+   const before=await page.locator('.new-item-field').boundingBox();
+   await page.getByRole('button',{name:'Ny vara',exact:true}).click();
+   await expect(search).toBeFocused();
+   const after=await page.locator('.new-item-field').boundingBox();
+   for(const coordinate of ['x','y','width','height'])expect(Math.abs(before[coordinate]-after[coordinate])).toBeLessThan(1);
+   await expect(page.getByRole('button',{name:'Tillbaka till inköpslistan',exact:true})).toHaveCount(0);
+  };
   const activeRow=product=>page.getByRole('list',{name:'Varor att handla',exact:true}).locator('li').filter({has:page.getByRole('button',{name:new RegExp(`^${product}, bocka av,`)})});
   const revealed=async product=>{
    await expect(search).toHaveCount(0);
@@ -33,12 +40,15 @@ try {
   await openAdd();
   await expect(search).toHaveValue('');
   await page.keyboard.type('Min specialvara');
-  await page.getByRole('button',{name:'Mängd & kategori',exact:true}).click();
   await page.getByRole('textbox',{name:'Mängd för ny vara',exact:true}).fill('3 pkt');
   await page.locator('#new-category').selectOption('pantry');
   await page.getByRole('button',{name:'Min specialvara',exact:true}).click();
   await revealed('Min specialvara');
   await expect(page.getByRole('button',{name:'Ändra Min specialvara, mängd 3 pkt',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Ändra Min specialvara, mängd 3 pkt',exact:true}).click();
+  await page.locator('#edit-category').selectOption('household');
+  await page.getByRole('button',{name:'Spara ändringar',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Min specialvara, bocka av, Hem & städ',exact:true})).toBeVisible();
   await openAdd();
   await page.getByRole('button',{name:'Mjölk, redan på listan, Mejeri & ägg',exact:true}).click();
   await revealed('Mjölk');
@@ -56,7 +66,7 @@ try {
   await revealed('Entervara');
   await openAdd();
   await expect(search).toBeFocused();
-  await page.getByRole('button',{name:'Klart',exact:true}).click();
+  await page.getByRole('button',{name:'Stäng lägg till vara',exact:true}).click();
   await page.getByRole('button',{name:'Fler alternativ',exact:true}).click();
   await page.getByRole('button',{name:'Byt namn',exact:true}).click();
   const rename=page.getByRole('textbox',{name:'Listans namn',exact:true});
@@ -74,8 +84,23 @@ try {
   await page.getByRole('button',{name:'Mina listor, 2 listor',exact:true}).click();
   await page.getByRole('navigation',{name:'Inköpslistor',exact:true}).getByRole('button',{name:/^Familjens inköp/}).click();
   await expect(page.getByRole('heading',{name:'Familjens inköp',exact:true})).toBeVisible();
+  await openAdd();
+  await page.keyboard.type('Osparad egen vara');
+  await page.locator('#new-category').selectOption('hygiene');
+  await page.keyboard.press('Tab');
+  await expect(search).toBeVisible();
+  await page.evaluate(()=>window.dispatchEvent(new Event('handla:update-ready')));
+  await expect(page.getByRole('button',{name:'Uppdatera',exact:true})).toBeVisible();
+  await expect(search).toHaveValue('Osparad egen vara');
+  // Blank-background dragging must not dismiss; an actual blank tap should.
+  const blank=await page.locator('.search-content').boundingBox();
+  const x=blank.x+30,y=Math.min(blank.y+blank.height-25,device.viewport.height-25);
+  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+30,y-20);await page.mouse.up();
+  await expect(search).toBeVisible();
+  await page.mouse.click(x,y);
+  await expect(search).toHaveCount(0);
   expect(errors).toEqual([]);
-  checks.push({device:name,immediateFocus:true,chipReturn:true,customQuantityReturn:true,existingNoDuplicate:true,checkedRestored:true,enterReturn:true,temporaryHighlight:true,focusAfterReopen:true,renameTrimAndOverview:true,blankRenameRejected:true,renameCancel:true});
+  checks.push({device:name,immediateFocus:true,chipReturn:true,customQuantityReturn:true,existingNoDuplicate:true,checkedRestored:true,enterReturn:true,temporaryHighlight:true,focusAfterReopen:true,renameTrimAndOverview:true,blankRenameRejected:true,renameCancel:true,stableInputRectangle:true,customCategoryCreateAndEdit:true,blankCloseAndDragGuard:true,updatePreservesDraft:true});
   await context.close();
  }
  console.log(JSON.stringify({status:'passed',checks,realIOSSoftwareKeyboardVerified:false,productionWrites:false}));
