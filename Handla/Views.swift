@@ -9,7 +9,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     private var shoppingPreview: Bool {
         #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--preview-shopping")
+        ["--preview-shopping", "--preview-lists", "--preview-add"].contains(where: ProcessInfo.processInfo.arguments.contains)
         #else
         false
         #endif
@@ -18,7 +18,7 @@ struct RootView: View {
         NavigationStack {
             Group {
                 if shoppingPreview {
-                    ItemsView(list: ShoppingList(id: "preview", name: "Veckohandling"), preview: true)
+                    ListsView(preview: true, showOverviewInitially: ProcessInfo.processInfo.arguments.contains("--preview-lists"), showAddInitially: ProcessInfo.processInfo.arguments.contains("--preview-add"))
                 } else if !store.configured {
                     ContentUnavailableView("Anslut Firebase", systemImage: "externaldrive.badge.plus", description: Text("Lägg till projektets GoogleService-Info.plist i Xcode för att börja använda Handla."))
                 } else if store.loading {
@@ -128,34 +128,42 @@ struct SignInView: View {
 
 struct ListsView: View {
     @EnvironmentObject private var store: Store
-    @State private var newList = ""
-    @State private var showNewList = false
-    @State private var settings = false
+    let preview: Bool
+    let showAddInitially: Bool
+    @State private var showingOverview: Bool
+    @State private var selectedID: String?
+    @State private var exampleLists = ShoppingExamples.lists
+    @State private var exampleItems = ShoppingExamples.items
+
+    init(preview: Bool = false, showOverviewInitially: Bool = false, showAddInitially: Bool = false) {
+        self.preview = preview; self.showAddInitially = showAddInitially
+        _showingOverview = State(initialValue: showOverviewInitially)
+    }
+    private var lists: [ShoppingList] { preview ? exampleLists : store.lists }
+    private var selected: ShoppingList? { lists.first(where: { $0.id == selectedID }) ?? lists.first }
     var body: some View {
-        List {
-            Section {
-                Label(store.workspaceName, systemImage: "person.2.fill").foregroundStyle(.secondary)
-            }
-            Section("Era listor") {
-                ForEach(store.lists) { list in
-                    NavigationLink { ItemsView(list: list) } label: {
-                        Label(list.name, systemImage: "list.bullet.rectangle").padding(.vertical, 8)
-                    }
-                }
-                Button { showNewList = true } label: { Label("Ny inköpslista", systemImage: "plus.circle.fill") }
-            }
-            if store.listsPending {
-                Text("Liständringar väntar på synkning.").font(.caption).foregroundStyle(.secondary)
+        Group {
+            if showingOverview || selected == nil {
+                ListOverview(lists: lists, preview: preview, canGoBack: selected != nil,
+                    exampleItems: exampleItems,
+                    onBack: { showingOverview = false },
+                    onSelect: { selectedID = $0.id; showingOverview = false },
+                    onCreate: { name in
+                        if preview {
+                            let list = ShoppingList(id: UUID().uuidString, name: name)
+                            exampleLists.append(list); exampleItems[list.id] = []
+                            selectedID = list.id; showingOverview = false
+                        } else { try store.addList(name) }
+                    })
+            } else if let selected {
+                ItemsView(list: selected, listCount: lists.count, preview: preview,
+                    exampleItems: Binding(get: { exampleItems[selected.id] ?? [] }, set: { exampleItems[selected.id] = $0 }),
+                    showAddInitially: showAddInitially, onShowLists: { showingOverview = true })
+                    .id(selected.id)
             }
         }
-        .navigationTitle("Handla")
-        .toolbar { Button { settings = true } label: { Image(systemName: "person.crop.circle") }.accessibilityLabel("Hushållet") }
-        .sheet(isPresented: $settings) { WorkspaceView() }
-        .alert("Ny inköpslista", isPresented: $showNewList) {
-            TextField("Listans namn", text: $newList)
-            Button("Skapa") { let name = newList; store.perform { try store.addList(name); newList = "" } }.disabled(newList.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy)
-            Button("Avbryt", role: .cancel) {}
-        }
+        .background(Color(uiColor: .systemBackground))
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -207,358 +215,451 @@ private extension GroceryCategory {
     }
 }
 
+private let handlaBlue = Color(red: 0.02, green: 0.55, blue: 0.95)
+
+@MainActor
+private final class GroceryObservation: ObservableObject {
+    @Published var items: [Grocery] = []
+    @Published var loading = true
+    @Published var pending = false
+    @Published var fromCache = false
+    private var listener: ListenerRegistration?
+    private var observationID = UUID()
+    func start(store: Store, listID: String) {
+        stop(); loading = true
+        let id = observationID, session = store.sessionID
+        listener = store.itemsRef(listID)?.addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, error in
+            Task { @MainActor [weak self] in
+                guard let self, self.observationID == id, store.sessionID == session else { return }
+                self.loading = false
+                if let error { store.error = error.localizedDescription; return }
+                self.items = (snapshot?.documents ?? []).map { document in
+                    let name = document.get("name") as? String ?? ""
+                    let category = (document.get("category") as? String).flatMap(GroceryCategory.init(rawValue:)) ?? GroceryCatalog.category(for: name)
+                    return Grocery(id: document.documentID, name: name, quantity: document.get("quantity") as? String ?? "", checked: document.get("checked") as? Bool ?? false, category: category)
+                }
+                self.pending = snapshot?.metadata.hasPendingWrites ?? false
+                self.fromCache = snapshot?.metadata.isFromCache ?? false
+            }
+        }
+    }
+    func stop() { listener?.remove(); listener = nil; observationID = UUID() }
+}
+
 struct ItemsView: View {
     @EnvironmentObject private var store: Store
     let list: ShoppingList
-    var preview = false
-    @State private var items: [Grocery] = []
-    @State private var listener: ListenerRegistration?
-    @State private var name = ""
-    @State private var quantity = ""
-    @State private var category: GroceryCategory = .other
-    @State private var manualCategory = false
-    @State private var pending = false
-    @State private var fromCache = false
-    @State private var loading = true
-    @State private var observationID = UUID()
+    let listCount: Int
+    let preview: Bool
+    @Binding var exampleItems: [Grocery]
+    let onShowLists: () -> Void
+    @StateObject private var observation = GroceryObservation()
+    @State private var adding: Bool
     @State private var editing: Grocery?
-    @State private var showMembers = false
-    @State private var previewInitialized = false
-    @FocusState private var nameFocused: Bool
-    private let accent = Color(red: 0.79, green: 0.24, blue: 0.23)
-    private var matches: [GrocerySuggestion] {
-        guard nameFocused, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        return Array(GroceryCatalog.suggestions(matching: name, custom: store.suggestions)
-            .filter { $0.name.caseInsensitiveCompare(name) != .orderedSame }.prefix(5))
+    @State private var showingWorkspace = false
+
+    init(list: ShoppingList, listCount: Int, preview: Bool, exampleItems: Binding<[Grocery]>, showAddInitially: Bool = false, onShowLists: @escaping () -> Void) {
+        self.list = list; self.listCount = listCount; self.preview = preview
+        _exampleItems = exampleItems; self.onShowLists = onShowLists
+        _adding = State(initialValue: showAddInitially)
     }
-    private var remaining: [Grocery] { orderedItems(checked: false) }
-    private var bought: [Grocery] { orderedItems(checked: true) }
-    private func orderedItems(checked: Bool) -> [Grocery] {
-        items.filter { $0.checked == checked }.sorted {
-            if $0.category.sortOrder != $1.category.sortOrder { return $0.category.sortOrder < $1.category.sortOrder }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
-    }
+    private var items: [Grocery] { preview ? exampleItems : observation.items }
+    private var active: [Grocery] { ordered(items.filter { !$0.checked }) }
+    private var bought: [Grocery] { ordered(items.filter(\.checked)) }
     var body: some View {
-        List {
-            if preview {
-                Text("Förhandsvisning · exempeldata")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .listRowSeparator(.hidden)
-            }
-            if loading {
-                ProgressView("Hämtar listan…").listRowSeparator(.hidden)
-            } else if items.isEmpty {
-                ContentUnavailableView("Vad behöver ni hemma?", systemImage: "basket", description: Text("Skriv en vara nedan. Vi hjälper dig att hitta den."))
-                    .listRowSeparator(.hidden)
-            } else {
-                Section {
-                    groceryRows(remaining)
-                } header: {
-                    HStack { Text("Att handla"); Spacer(); Text("\(remaining.count) kvar") }
-                        .font(.subheadline).foregroundStyle(.secondary).textCase(nil)
-                }
-                if !bought.isEmpty {
-                    Section {
-                        groceryRows(bought)
-                    } header: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark")
-                            Text("Köpt")
-                            Spacer()
-                            Text("\(bought.count)")
-                        }.font(.subheadline).foregroundStyle(.secondary).textCase(nil).padding(.top, 14)
-                    }
-                }
-            }
-            if pending || fromCache {
-                Text(pending ? "Ändringar väntar på synkning." : "Visar sparad lista. Synkas när anslutningen är tillbaka.")
-                    .font(.caption).foregroundStyle(.secondary).listRowSeparator(.hidden)
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: onShowLists) {
+                    ZStack {
+                        Image(systemName: "square.on.square").font(.system(size: 25, weight: .light))
+                        Text("\(listCount)").font(.system(size: 12, weight: .medium)).offset(x: 3, y: 2)
+                    }.frame(width: 44, height: 44)
+                }.accessibilityLabel("Mina listor, \(listCount) listor")
+                Spacer()
+                Button { showingWorkspace = true } label: {
+                    Image(systemName: "person.2").font(.system(size: 24, weight: .light)).frame(width: 44, height: 44)
+                }.accessibilityLabel("Hushållets medlemmar")
+                Menu {
+                    Button("Mina listor", systemImage: "list.bullet") { onShowLists() }
+                    Button("Ert hushåll", systemImage: "person.2") { showingWorkspace = true }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 25, weight: .medium)).frame(width: 44, height: 44)
+                }.accessibilityLabel("Fler alternativ")
+            }.foregroundStyle(handlaBlue).padding(.horizontal, 14).padding(.top, 3)
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text(list.name).font(.system(size: 36, weight: .bold)).tracking(-0.8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button { adding = true } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "plus").font(.system(size: 21, weight: .light))
+                                    Text("Ny vara").font(.system(size: 19))
+                                    Spacer()
+                                }.foregroundStyle(.secondary).padding(.horizontal, 15).frame(height: 51)
+                                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                            }.accessibilityLabel("Ny vara")
+                        }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
+                        if !preview && observation.loading {
+                            ProgressView().padding(24)
+                        } else if items.isEmpty {
+                            Text("Lägg till det ni behöver handla.").foregroundStyle(.secondary).padding(.top, 26)
+                        }
+                        VStack(spacing: 0) { ForEach(active) { item in groceryRow(item) } }
+                        Spacer(minLength: bought.isEmpty ? 32 : 80)
+                        if !bought.isEmpty {
+                            VStack(spacing: 0) {
+                                DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).foregroundStyle(Color.gray.opacity(0.22))
+                                ForEach(bought) { item in groceryRow(item) }
+                                Spacer(minLength: 12)
+                            }
+                            .frame(minHeight: geometry.size.height * 0.28, alignment: .top)
+                            .background(Color(uiColor: .secondarySystemBackground).opacity(0.75))
+                        }
+                        if !preview && (observation.pending || observation.fromCache) {
+                            Text(observation.pending ? "Väntar på synkning…" : "Visar sparad lista")
+                                .font(.caption).foregroundStyle(.secondary).padding(10)
+                        }
+                        if preview {
+                            Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(7)
+                        }
+                    }.frame(minHeight: geometry.size.height, alignment: .top)
+                }.scrollIndicators(.hidden)
             }
         }
-        .listStyle(.plain)
-        .scrollDismissesKeyboard(.interactively)
         .background(Color(uiColor: .systemBackground))
-        .navigationTitle(list.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { nameFocused = false; showMembers = true } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "person.2")
-                        Text("\(preview ? 2 : store.memberCount)").font(.subheadline.weight(.medium))
-                    }
-                }.accessibilityLabel("Hushållets medlemmar, \(preview ? 2 : store.memberCount)")
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
-        .tint(accent)
-        .onChange(of: name) { _, value in
-            if value.isEmpty { manualCategory = false; category = .other }
-            else if !manualCategory {
-                category = store.suggestions.first(where: { GroceryCatalog.normalized($0.name) == GroceryCatalog.normalized(value) })?.category ?? GroceryCatalog.category(for: value)
-            }
+        .toolbar(.hidden, for: .navigationBar)
+        .tint(handlaBlue)
+        .navigationDestination(isPresented: $adding) {
+            AddGroceriesView(list: list, preview: preview, exampleItems: $exampleItems)
         }
         .sheet(item: $editing) { item in
-            GroceryEditor(item: item) { newName, newQuantity, newCategory in
+            GroceryEditor(item: item) { name, quantity, category in
                 if preview {
-                    replace(item, name: newName, quantity: newQuantity, category: newCategory, checked: item.checked)
-                } else {
-                    try store.updateItem(item.id, name: newName, quantity: newQuantity, category: newCategory, listID: list.id)
-                }
-            }.tint(accent)
+                    guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
+                    let current = exampleItems[index]
+                    exampleItems[index] = Grocery(id: current.id, name: name, quantity: quantity, checked: current.checked, category: category)
+                } else { try store.updateItem(item.id, name: name, quantity: quantity, category: category, listID: list.id) }
+            }.tint(handlaBlue)
         }
-        .sheet(isPresented: $showMembers) {
+        .sheet(isPresented: $showingWorkspace) {
             if preview {
                 NavigationStack {
-                    ContentUnavailableView("Handla tillsammans", systemImage: "person.2", description: Text("I appen finns hushållets medlemmar och inbjudningslänk här. Detta är en förhandsvisning med exempeldata."))
-                        .navigationTitle("Ert hushåll")
-                        .toolbar { Button("Klart") { showMembers = false } }
+                    ContentUnavailableView("Ert hushåll", systemImage: "person.2", description: Text("Här bjuder du in familjen i den riktiga appen."))
+                        .toolbar { Button("Klart") { showingWorkspace = false } }
                 }
             } else { WorkspaceView() }
         }
-        .onAppear(perform: observe)
-        .onDisappear { listener?.remove(); listener = nil; observationID = UUID() }
+        .onAppear { if !preview { observation.start(store: store, listID: list.id) } }
+        .onDisappear { observation.stop() }
     }
-
-    private var composer: some View {
-        VStack(spacing: 0) {
-            if !matches.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(matches) { suggestion in
-                        Button {
-                            name = suggestion.name
-                            category = suggestion.category
-                            manualCategory = false
-                        } label: {
-                            HStack(spacing: 10) {
-                                Circle().fill(suggestion.category.color).frame(width: 9, height: 9)
-                                Text(suggestion.name).foregroundStyle(.primary)
-                                Spacer()
-                                Text(suggestion.category.title).font(.caption).foregroundStyle(.secondary)
-                                Image(systemName: "arrow.up.left").font(.caption).foregroundStyle(.tertiary)
-                            }.padding(.horizontal, 18).frame(minHeight: 40).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                    }
-                }.padding(.vertical, 5)
-                Divider()
-            }
-            HStack(spacing: 12) {
-                TextField("Lägg till en vara…", text: $name)
-                    .font(.body).focused($nameFocused).submitLabel(.done).onSubmit(add)
-                    .accessibilityLabel("Varans namn")
-                TextField("Mängd", text: $quantity)
-                    .multilineTextAlignment(.trailing).frame(width: 65)
-                    .accessibilityLabel("Mängd för ny vara")
-                Button(action: add) {
-                    Image(systemName: "plus.circle.fill").font(.system(size: 30))
-                }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy)
-                    .accessibilityLabel("Lägg till vara")
-            }.padding(.horizontal, 16).padding(.top, 13).padding(.bottom, 10)
-            if !name.isEmpty {
+    private func groceryRow(_ item: Grocery) -> some View {
+        HStack(spacing: 0) {
+            Rectangle().fill(item.category.color.opacity(item.checked ? 0.3 : 1)).frame(width: 5)
+            Button { toggle(item) } label: {
                 HStack {
-                    Menu {
-                        Picker("Kategori", selection: Binding(get: { category }, set: { category = $0; manualCategory = true })) {
-                            ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Circle().fill(category.color).frame(width: 8, height: 8)
-                            Text(category.title)
-                            Image(systemName: "chevron.down").font(.caption2)
-                        }.font(.caption).foregroundStyle(.secondary)
-                    }.accessibilityLabel("Kategori: \(category.title)")
-                    Spacer()
-                }.padding(.horizontal, 18).padding(.bottom, 10)
-            }
+                    Text(item.name).font(.system(size: 22)).strikethrough(item.checked, color: .secondary)
+                        .foregroundStyle(item.checked ? .secondary : .primary).multilineTextAlignment(.leading)
+                    Spacer(minLength: 4)
+                }.padding(.leading, 19).padding(.vertical, 15).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("\(item.name), \(item.checked ? "köpt, lägg tillbaka" : "bocka av")")
+            Button { editing = item } label: {
+                Text(item.quantity.isEmpty ? " " : item.quantity).font(.system(size: 20))
+                    .strikethrough(item.checked, color: .secondary).foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44, alignment: .trailing).padding(.trailing, 22)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("Ändra \(item.name), mängd \(item.quantity)")
         }
-        .background(Color(uiColor: .systemBackground))
-        .overlay(alignment: .top) { Divider() }
-    }
-
-    @ViewBuilder private func groceryRows(_ groceries: [Grocery]) -> some View {
-        ForEach(groceries) { item in
-            HStack(spacing: 0) {
-                Rectangle().fill(item.category.color.opacity(item.checked ? 0.35 : 1)).frame(width: 5)
-                Button { toggle(item) } label: {
-                    HStack(spacing: 10) {
-                        Text(item.name)
-                            .font(.title3)
-                            .strikethrough(item.checked, color: .secondary)
-                            .foregroundStyle(item.checked ? .secondary : .primary)
-                            .multilineTextAlignment(.leading)
-                        Spacer(minLength: 8)
-                    }.padding(.leading, 14).padding(.vertical, 15).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .accessibilityLabel("\(item.name), \(item.category.title), \(item.checked ? "köpt" : "att handla")")
-                    .accessibilityHint(item.checked ? "Tryck för att lägga tillbaka på listan." : "Tryck för att bocka av.")
-                Button { nameFocused = false; editing = item } label: {
-                    Text(item.quantity.isEmpty ? "Mängd" : item.quantity)
-                        .font(.body).foregroundStyle(item.checked ? .tertiary : .secondary)
-                        .strikethrough(item.checked, color: .secondary)
-                        .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
-                        .contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .accessibilityLabel("Ändra mängd för \(item.name), \(item.quantity.isEmpty ? "ingen mängd" : item.quantity)")
-                    .padding(.trailing, 17)
-            }
-            .frame(minHeight: 56)
-            .listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.primary.opacity(0.09)).frame(height: 0.5).padding(.leading, 19)
-            }
-            .contextMenu {
-                Button("Ändra vara", systemImage: "pencil") { editing = item }
-                Button(item.checked ? "Lägg tillbaka" : "Bocka av", systemImage: item.checked ? "arrow.uturn.backward" : "checkmark") { toggle(item) }
-                Button("Ta bort", systemImage: "trash", role: .destructive) { remove(item) }
-            }
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button("Ta bort", role: .destructive) { remove(item) }
-                Button("Ändra") { nameFocused = false; editing = item }.tint(.gray)
-            }
-        }
-    }
-
-    private func observe() {
-        listener?.remove()
-        if preview {
-            #if DEBUG
-            if !previewInitialized {
-                previewInitialized = true
-                items = Self.previewItems
-                if ProcessInfo.processInfo.arguments.contains("--preview-suggestions") {
-                    name = "mj"
-                    nameFocused = true
-                }
-                if ProcessInfo.processInfo.arguments.contains("--preview-edit") {
-                    Task { @MainActor in
-                        await Task.yield()
-                        editing = items.first(where: { $0.id == "milk" })
-                    }
-                }
-            }
-            #endif
-            loading = false
-            return
-        }
-        let session = store.sessionID
-        let observation = UUID()
-        observationID = observation
-        loading = true
-        listener = store.itemsRef(list.id)?.addSnapshotListener(includeMetadataChanges: true) { snapshot, error in
-            Task { @MainActor in
-                guard store.sessionID == session, observationID == observation else { return }
-                loading = false
-                if let error { store.error = error.localizedDescription; return }
-                items = (snapshot?.documents ?? []).map {
-                    let name = $0.get("name") as? String ?? ""
-                    let category = ($0.get("category") as? String).flatMap(GroceryCategory.init(rawValue:)) ?? GroceryCatalog.category(for: name)
-                    return Grocery(id: $0.documentID, name: name, quantity: $0.get("quantity") as? String ?? "", checked: $0.get("checked") as? Bool ?? false, category: category)
-                }
-                pending = snapshot?.metadata.hasPendingWrites ?? false
-                fromCache = snapshot?.metadata.isFromCache ?? false
-            }
+        .frame(minHeight: 58)
+        .overlay(alignment: .bottom) { DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).padding(.leading, 24).foregroundStyle(Color.gray.opacity(0.27)) }
+        .contextMenu {
+            Button("Ändra vara", systemImage: "pencil") { editing = item }
+            Button("Ta bort", systemImage: "trash", role: .destructive) { remove(item) }
         }
     }
     private func toggle(_ item: Grocery) {
         if preview {
-            replace(item, name: item.name, quantity: item.quantity, category: item.category, checked: !item.checked)
-            return
-        }
-        let session = store.sessionID
-        store.itemsRef(list.id)?.document(item.id).updateData(["checked": !item.checked]) { error in
-            Task { @MainActor in
-                guard store.sessionID == session else { return }
-                if let error { store.error = error.localizedDescription }
+            guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
+            exampleItems[index] = Grocery(id: item.id, name: item.name, quantity: item.quantity, checked: !item.checked, category: item.category)
+        } else {
+            let session = store.sessionID
+            store.itemsRef(list.id)?.document(item.id).updateData(["checked": !item.checked]) { error in
+                Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
             }
         }
     }
     private func remove(_ item: Grocery) {
-        if preview { items.removeAll { $0.id == item.id }; return }
+        if preview { exampleItems.removeAll { $0.id == item.id }; return }
         let session = store.sessionID
         store.itemsRef(list.id)?.document(item.id).delete { error in
-            Task { @MainActor in
-                guard store.sessionID == session else { return }
-                if let error { store.error = error.localizedDescription }
-            }
+            Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
         }
     }
-    private func replace(_ item: Grocery, name: String, quantity: String, category: GroceryCategory, checked: Bool) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[index] = Grocery(id: item.id, name: name, quantity: quantity, checked: checked, category: category)
+    private func ordered(_ values: [Grocery]) -> [Grocery] {
+        values.sorted { $0.category.sortOrder == $1.category.sortOrder ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.category.sortOrder < $1.category.sortOrder }
     }
-    private func add() {
-        let itemName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !itemName.isEmpty, !store.busy else { return }
+}
+
+private struct ListOverview: View {
+    let lists: [ShoppingList]
+    let preview: Bool
+    let canGoBack: Bool
+    let exampleItems: [String: [Grocery]]
+    let onBack: () -> Void
+    let onSelect: (ShoppingList) -> Void
+    let onCreate: (String) throws -> Void
+    @EnvironmentObject private var store: Store
+    @State private var creating = false
+    @State private var name = ""
+    private let colors: [Color] = [.teal, .black, .pink, .indigo, .orange]
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                HStack {
+                    if canGoBack { Button(action: onBack) { Image(systemName: "chevron.left").font(.system(size: 25, weight: .light)).frame(width: 44, height: 44) }.accessibilityLabel("Tillbaka till listan") }
+                    Spacer()
+                }.frame(height: 48).padding(.horizontal, 13)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Mina listor").font(.system(size: 36, weight: .bold)).tracking(-0.8).padding(.horizontal, 23).padding(.top, 16).padding(.bottom, 26)
+                        ForEach(Array(lists.enumerated()), id: \.element.id) { index, list in
+                            OverviewRow(list: list, color: colors[index % colors.count], preview: preview, exampleItems: exampleItems[list.id] ?? [], onSelect: { onSelect(list) })
+                        }
+                        if lists.isEmpty { Text("Skapa din första inköpslista.").foregroundStyle(.secondary).padding(23) }
+                    }.padding(.bottom, 100)
+                }
+            }
+            Button { creating = true } label: {
+                Image(systemName: "plus").font(.system(size: 31, weight: .light)).foregroundStyle(.white)
+                    .frame(width: 65, height: 65).background(handlaBlue, in: Circle()).shadow(color: .black.opacity(0.12), radius: 5, y: 3)
+            }.accessibilityLabel("Ny inköpslista").padding(.trailing, 24).padding(.bottom, 22)
+        }
+        .background(Color(uiColor: .systemBackground)).tint(handlaBlue).toolbar(.hidden, for: .navigationBar)
+        .alert("Ny inköpslista", isPresented: $creating) {
+            TextField("Listans namn", text: $name)
+            Button("Skapa") {
+                do { try onCreate(name); name = "" } catch { store.error = error.localizedDescription }
+            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Avbryt", role: .cancel) {}
+        }
+    }
+}
+
+private struct OverviewRow: View {
+    @EnvironmentObject private var store: Store
+    let list: ShoppingList
+    let color: Color
+    let preview: Bool
+    let exampleItems: [Grocery]
+    let onSelect: () -> Void
+    @StateObject private var observation = GroceryObservation()
+    private var summary: String {
+        let names = (preview ? exampleItems : observation.items).filter { !$0.checked }.map(\.name)
+        return names.isEmpty ? (observation.loading && !preview ? "Hämtar varor…" : "Inga varor att handla") : names.joined(separator: ", ")
+    }
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(list.name).font(.system(size: 25, weight: .bold)).foregroundStyle(color)
+                Text(summary).font(.system(size: 18)).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 24).padding(.vertical, 22).frame(minHeight: 119, alignment: .topLeading).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .overlay(alignment: .bottom) { Rectangle().fill(Color.gray.opacity(0.18)).frame(height: 0.5) }
+            .onAppear { if !preview { observation.start(store: store, listID: list.id) } }
+            .onDisappear { observation.stop() }
+    }
+}
+
+private struct AddGroceriesView: View {
+    @EnvironmentObject private var store: Store
+    @Environment(\.dismiss) private var dismiss
+    let list: ShoppingList
+    let preview: Bool
+    @Binding var exampleItems: [Grocery]
+    @StateObject private var observation = GroceryObservation()
+    @State private var query = ""
+    @State private var quantity = ""
+    @State private var category: GroceryCategory = .other
+    @State private var manualCategory = false
+    @State private var fullCatalogue = false
+    @FocusState private var focused: Bool
+    private var items: [Grocery] { preview ? exampleItems : observation.items }
+    private var suggestions: [GrocerySuggestion] {
+        if !GroceryCatalog.normalized(query).isEmpty {
+            return Array(GroceryCatalog.suggestions(matching: query, custom: store.suggestions).prefix(80))
+        }
+        let common = ["Mjölk", "Ägg", "Smör", "Ost", "Yoghurt", "Bröd", "Knäckebröd", "Bananer", "Äpplen", "Tomater", "Gurka", "Potatis", "Morötter", "Gul lök", "Paprika", "Avokado", "Kycklingfilé", "Nötfärs", "Lax", "Pasta", "Ris", "Krossade tomater", "Kaffe", "Te", "Havregryn", "Toalettpapper", "Diskmedel", "Tvättmedel", "Tandkräm", "Glass", "Chips", "Choklad"]
+        if fullCatalogue {
+            return store.suggestions.sorted { $0.category == $1.category ? $0.id < $1.id : $0.category.sortOrder < $1.category.sortOrder }
+        }
+        let names = Set(GroceryCatalog.builtIn.map(\.id))
+        let custom = store.suggestions.filter { !names.contains($0.id) }
+        let activeItems = items.filter { !$0.checked }.map { GrocerySuggestion(name: $0.name, category: $0.category) }
+        let commonItems = common.compactMap { name in store.suggestions.first(where: { $0.id == GroceryCatalog.normalized(name) }) }
+        var seen = Set<String>()
+        let candidates = (activeItems + custom + commonItems).filter { seen.insert($0.id).inserted }
+        return GroceryCategory.allCases.flatMap { category in Array(candidates.filter { $0.category == category }.prefix(4)) }
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Button { dismiss() } label: { Image(systemName: "chevron.left").font(.system(size: 24, weight: .light)).frame(width: 35, height: 44) }.accessibilityLabel("Tillbaka")
+                HStack(spacing: 9) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Ny vara", text: $query).focused($focused).submitLabel(.done).onSubmit { addTyped() }
+                    if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.accessibilityLabel("Rensa sökning") }
+                }.padding(.horizontal, 12).frame(height: 44).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button { addTyped() } label: { Image(systemName: "plus.circle.fill").font(.system(size: 27)) }.accessibilityLabel("Lägg till vara")
+                } else {
+                    Button { fullCatalogue.toggle() } label: { Image(systemName: fullCatalogue ? "book.closed.fill" : "book").font(.system(size: 23)).frame(width: 35, height: 44) }
+                        .accessibilityLabel(fullCatalogue ? "Visa vanliga varor" : "Visa hela varukatalogen")
+                }
+            }.padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 10)
+            if !query.isEmpty {
+                HStack(spacing: 16) {
+                    TextField("Mängd, t.ex. 2 l", text: $quantity).font(.subheadline).accessibilityLabel("Mängd för ny vara")
+                    Picker("Kategori", selection: Binding(get: { category }, set: { category = $0; manualCategory = true })) {
+                        ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) }
+                    }.tint(category.color).pickerStyle(.menu)
+                }.padding(.horizontal, 23).padding(.bottom, 8)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(fullCatalogue && query.isEmpty ? "Alla varor" : "Förslag").font(.subheadline).foregroundStyle(.secondary)
+                    ChipLayout(spacing: 7) {
+                        ForEach(suggestions) { suggestion in
+                            Button { add(suggestion.name, category: suggestion.category) } label: {
+                                HStack(spacing: 5) {
+                                    Text(suggestion.name).font(.system(size: 15, weight: .medium))
+                                    if items.contains(where: { GroceryCatalog.normalized($0.name) == suggestion.id && !$0.checked }) {
+                                        Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold))
+                                    }
+                                }.foregroundStyle(.primary).padding(.horizontal, 10).padding(.vertical, 8)
+                                    .background(suggestion.category.color.opacity(0.48), in: RoundedRectangle(cornerRadius: 8))
+                            }.buttonStyle(.plain).accessibilityLabel("Lägg till \(suggestion.name)")
+                        }
+                    }
+                    if suggestions.isEmpty { Text("Tryck på plus för att lägga till \(query).").font(.subheadline).foregroundStyle(.secondary) }
+                    if preview { Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(.top, 16) }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 3)
+            }.scrollDismissesKeyboard(.interactively)
+        }
+        .background(Color(uiColor: .systemBackground)).tint(handlaBlue).toolbar(.hidden, for: .navigationBar)
+        .onChange(of: query) { _, value in
+            if value.isEmpty { manualCategory = false; category = .other }
+            else if !manualCategory { category = store.suggestions.first(where: { $0.id == GroceryCatalog.normalized(value) })?.category ?? GroceryCatalog.category(for: value) }
+        }
+        .onAppear {
+            if !preview { observation.start(store: store, listID: list.id) }
+            #if DEBUG
+            if !ProcessInfo.processInfo.arguments.contains("--preview-hide-keyboard") { focused = true }
+            #else
+            focused = true
+            #endif
+        }
+        .onDisappear { observation.stop() }
+    }
+    private func addTyped() { add(query, category: category) }
+    private func add(_ rawName: String, category: GroceryCategory) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if let existing = items.first(where: { GroceryCatalog.normalized($0.name) == GroceryCatalog.normalized(name) }) {
+            if existing.checked {
+                if preview, let index = exampleItems.firstIndex(where: { $0.id == existing.id }) {
+                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category)
+                } else {
+                    let session = store.sessionID
+                    store.itemsRef(list.id)?.document(existing.id).updateData(["checked": false]) { error in
+                        Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
+                    }
+                }
+            }
+            return
+        }
         do {
             if preview {
-                guard itemName.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Ange ett kortare varunamn eller en kortare mängd.") }
-                items.append(Grocery(id: UUID().uuidString, name: itemName, quantity: quantity, checked: false, category: category))
-            } else {
-                try store.addItem(itemName, quantity: quantity, category: category, listID: list.id)
-            }
-            name = ""; quantity = ""; category = .other; manualCategory = false; nameFocused = true
+                guard name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Varunamnet eller mängden är för långt.") }
+                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category))
+            } else { try store.addItem(name, quantity: quantity, category: category, listID: list.id) }
+            quantity = ""
         } catch { store.error = error.localizedDescription }
     }
-    #if DEBUG
-    private static let previewItems = [
-        Grocery(id: "banana", name: "Bananer", quantity: "6 st", checked: false, category: .produce),
-        Grocery(id: "cucumber", name: "Gurka", quantity: "1 st", checked: false, category: .produce),
-        Grocery(id: "tomato", name: "Tomater", quantity: "500 g", checked: false, category: .produce),
-        Grocery(id: "milk", name: "Mjölk", quantity: "2 l", checked: false, category: .dairy),
-        Grocery(id: "eggs", name: "Ägg", quantity: "12 st", checked: false, category: .dairy),
-        Grocery(id: "pasta", name: "Pasta", quantity: "500 g", checked: false, category: .pantry),
-        Grocery(id: "bread", name: "Bröd", quantity: "1 st", checked: true, category: .bakery),
-        Grocery(id: "coffee", name: "Kaffe", quantity: "1 pkt", checked: true, category: .drinks)
-    ]
-    #endif
 }
 
 private struct GroceryEditor: View {
     @Environment(\.dismiss) private var dismiss
+    let onSave: (String, String, GroceryCategory) throws -> Void
     @State private var name: String
     @State private var quantity: String
     @State private var category: GroceryCategory
     @State private var error: String?
-    let onSave: (String, String, GroceryCategory) throws -> Void
     init(item: Grocery, onSave: @escaping (String, String, GroceryCategory) throws -> Void) {
-        _name = State(initialValue: item.name)
-        _quantity = State(initialValue: item.quantity)
-        _category = State(initialValue: item.category)
-        self.onSave = onSave
+        self.onSave = onSave; _name = State(initialValue: item.name); _quantity = State(initialValue: item.quantity); _category = State(initialValue: item.category)
     }
     var body: some View {
         NavigationStack {
             Form {
-                Section("Vara") {
-                    TextField("Namn", text: $name)
-                    HStack { Text("Mängd"); Spacer(); TextField("Exempelvis 2 l", text: $quantity).multilineTextAlignment(.trailing) }
+                Section("Vara") { TextField("Namn", text: $name); HStack { Text("Mängd"); TextField("Till exempel 2 l", text: $quantity).multilineTextAlignment(.trailing) } }
+                Section("Kategori") { Picker("Kategori", selection: $category) { ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) } } }
+                if let error { Text(error).foregroundStyle(.red) }
+            }.navigationTitle("Ändra vara").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Avbryt") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Spara") {
+                            do { try onSave(name, quantity, category); dismiss() } catch { self.error = error.localizedDescription }
+                        }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
-                Section("Kategori") {
-                    Picker("Kategori", selection: $category) {
-                        ForEach(GroceryCategory.allCases) { category in
-                            Label { Text(category.title) } icon: { Circle().fill(category.color).frame(width: 10, height: 10) }.tag(category)
-                        }
-                    }.pickerStyle(.navigationLink)
-                }
-                if let error { Text(error).foregroundStyle(.red).font(.callout) }
-            }
-            .navigationTitle("Ändra vara")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Avbryt") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Spara") {
-                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty, trimmed.count <= 120, quantity.count <= 80 else {
-                            error = "Ange ett varunamn på högst 120 tecken och en mängd på högst 80 tecken."; return
-                        }
-                        do { try onSave(trimmed, quantity, category); dismiss() }
-                        catch { self.error = error.localizedDescription }
-                    }.fontWeight(.semibold).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
         }
     }
+}
+
+private struct DashedDivider: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path(); path.move(to: CGPoint(x: rect.minX, y: rect.midY)); path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY)); return path
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize) -> CGSize { CGSize(width: proposal.width ?? 0, height: 1) }
+}
+
+private struct ChipLayout: Layout {
+    var spacing: CGFloat = 7
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        layout(width: proposal.width ?? 350, subviews: subviews).size
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = layout(width: bounds.width, subviews: subviews)
+        for (index, point) in result.points.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
+        }
+    }
+    private func layout(width: CGFloat, subviews: Subviews) -> (size: CGSize, points: [CGPoint]) {
+        var points: [CGPoint] = [], x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            points.append(CGPoint(x: x, y: y)); x += size.width + spacing; rowHeight = max(rowHeight, size.height)
+        }
+        return (CGSize(width: width, height: y + rowHeight), points)
+    }
+}
+
+private enum ShoppingExamples {
+    static let lists = [ShoppingList(id: "week", name: "Veckohandling"), ShoppingList(id: "weekend", name: "Till helgen"), ShoppingList(id: "cabin", name: "Sommarstugan")]
+    static let items: [String: [Grocery]] = [
+        "week": [
+            Grocery(id: "banana", name: "Bananer", quantity: "6 st", checked: false, category: .produce),
+            Grocery(id: "cucumber", name: "Gurka", quantity: "1 st", checked: false, category: .produce),
+            Grocery(id: "milk", name: "Mjölk", quantity: "2 l", checked: false, category: .dairy),
+            Grocery(id: "pasta", name: "Pasta", quantity: "500 g", checked: false, category: .pantry),
+            Grocery(id: "bread", name: "Bröd", quantity: "1 st", checked: true, category: .bakery),
+            Grocery(id: "coffee", name: "Kaffe", quantity: "1 pkt", checked: true, category: .drinks),
+            Grocery(id: "eggs", name: "Ägg", quantity: "12 st", checked: true, category: .dairy)
+        ],
+        "weekend": [Grocery(id: "salmon", name: "Lax", quantity: "600 g", checked: false, category: .fish), Grocery(id: "potato", name: "Potatis", quantity: "1 kg", checked: false, category: .produce), Grocery(id: "cream", name: "Crème fraiche", quantity: "2 dl", checked: false, category: .dairy)],
+        "cabin": [Grocery(id: "paper", name: "Toalettpapper", quantity: "1 pkt", checked: false, category: .household), Grocery(id: "soap", name: "Diskmedel", quantity: "1 st", checked: false, category: .household)]
+    ]
 }
