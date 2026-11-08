@@ -342,7 +342,8 @@ private final class GroceryObservation: ObservableObject {
         let name = data["name"] as? String ?? ""
         return Grocery(id: document.documentID, name: name, quantity: data["quantity"] as? String ?? "", checked: data["checked"] as? Bool ?? false,
             category: (data["category"] as? String).flatMap(GroceryCategory.init(rawValue:)) ?? GroceryCatalog.category(for: name),
-            createdAt: (data["createdAt"] as? Timestamp)?.dateValue(), checkedAt: (data["checkedAt"] as? Timestamp)?.dateValue())
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue(), checkedAt: (data["checkedAt"] as? Timestamp)?.dateValue(),
+            createdByUID: data["createdByUID"] as? String, updatedByUID: data["updatedByUID"] as? String, updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue())
     }
     private func publish() {
         var merged: [String: Grocery] = [:]
@@ -448,6 +449,7 @@ struct ItemsView: View {
     let onRename: (String) throws -> Void
     @StateObject private var observation = GroceryObservation()
     @FocusState private var addFocused: Bool
+    @State private var keyboardTop = CGFloat.greatestFiniteMagnitude
     @State private var query = ""
     @State private var quantity = ""
     @State private var category: GroceryCategory = .other
@@ -517,8 +519,6 @@ struct ItemsView: View {
             }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
                 .background { Color.clear.contentShape(Rectangle()).onTapGesture { if adding { closeComposer() } } }
             GeometryReader { geometry in
-                ScrollViewReader { proxy in
-                ZStack(alignment: .top) {
                 ScrollView {
                     VStack(spacing: 0) {
                         if !preview && observation.loading {
@@ -552,25 +552,41 @@ struct ItemsView: View {
                             Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(7)
                         }
                     }.frame(minHeight: geometry.size.height, alignment: .top)
-                }.scrollIndicators(.hidden).scrollDisabled(adding).allowsHitTesting(!adding)
-                .task(id: "\(adding)-\(revealName ?? "")-\(items.first(where: { GroceryCatalog.normalized($0.name) == revealName && !$0.checked })?.id ?? "")") {
-                    guard !adding, let name = revealName,
-                          let item = items.first(where: { GroceryCatalog.normalized($0.name) == name && !$0.checked }) else { return }
-                    withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(item.id, anchor: .center) }
+                        // Hide rows from VoiceOver while hints cover them. Keep
+                        // this inside the scroll view: hiding the scroll view
+                        // itself rebuilds a UIKit wrapper during keyboard exit.
+                        .accessibilityHidden(adding)
+                }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+                .scrollIndicators(.hidden)
+                .task(id: revealName) {
+                    guard let name = revealName else { return }
+                    // Highlight an added item without moving the shopper's list.
                     do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                    if revealName == name { withAnimation { revealName = nil } }
+                    if revealName == name { revealName = nil }
                 }
-                if adding {
+                .overlay(alignment: .top) {
+                    if adding {
                     GrocerySuggestionsOverlay(query: $query, quantity: $quantity, category: $category,
                         manualCategory: $manualCategory, fullCatalogue: $fullCatalogue,
                         items: items, preview: preview, onAdd: add, onClose: closeComposer)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.bottom, max(0, geometry.frame(in: .global).maxY - keyboardTop))
                         .background(Color(uiColor: .systemBackground))
                         .transition(.identity)
-                }
-                }
+                    }
                 }
             }
+        }
+        // Keyboard resizing belongs to the hints only. The retained list keeps
+        // exactly the same viewport, spacers and scroll offset underneath it.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                keyboardTop = frame.minY
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardTop = .greatestFiniteMagnitude
         }
         .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
@@ -597,7 +613,7 @@ struct ItemsView: View {
                 if preview {
                     guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
                     let current = exampleItems[index]
-                    exampleItems[index] = Grocery(id: current.id, name: name, quantity: quantity, checked: current.checked, category: category, createdAt: current.createdAt, checkedAt: current.checkedAt)
+                    exampleItems[index] = Grocery(id: current.id, name: name, quantity: quantity, checked: current.checked, category: category, createdAt: current.createdAt, checkedAt: current.checkedAt, createdByUID: current.createdByUID, updatedByUID: "preview-you", updatedAt: Date())
                 } else { try store.updateItem(item.id, name: name, quantity: quantity, category: category, listID: list.id) }
             }.tint(handlaBlue)
         }
@@ -632,7 +648,7 @@ struct ItemsView: View {
         if let existing = items.first(where: { GroceryCatalog.normalized($0.name) == GroceryCatalog.normalized(name) }) {
             if existing.checked {
                 if preview, let index = exampleItems.firstIndex(where: { $0.id == existing.id }) {
-                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category, createdAt: existing.createdAt, checkedAt: existing.checkedAt)
+                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category, createdAt: existing.createdAt, checkedAt: existing.checkedAt, createdByUID: existing.createdByUID, updatedByUID: "preview-you", updatedAt: Date())
                 } else {
                     do { try store.setItemChecked(existing.id, checked: false, listID: list.id) }
                     catch { store.error = error.localizedDescription; return }
@@ -645,7 +661,7 @@ struct ItemsView: View {
         do {
             if preview {
                 guard name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Varunamnet eller mängden är för långt.") }
-                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category, createdAt: Date()))
+                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category, createdAt: Date(), createdByUID: "preview-you", updatedByUID: "preview-you", updatedAt: Date()))
             } else { try store.addItem(name, quantity: quantity, category: category, listID: list.id) }
             closeComposer()
             revealName = GroceryCatalog.normalized(name)
@@ -681,7 +697,7 @@ struct ItemsView: View {
     private func toggle(_ item: Grocery) {
         if preview {
             guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
-            exampleItems[index] = Grocery(id: item.id, name: item.name, quantity: item.quantity, checked: !item.checked, category: item.category, createdAt: item.createdAt, checkedAt: item.checked ? item.checkedAt : Date())
+            exampleItems[index] = Grocery(id: item.id, name: item.name, quantity: item.quantity, checked: !item.checked, category: item.category, createdAt: item.createdAt, checkedAt: item.checked ? item.checkedAt : Date(), createdByUID: item.createdByUID, updatedByUID: "preview-you", updatedAt: Date())
         } else {
             do { try store.setItemChecked(item.id, checked: !item.checked, listID: list.id) }
             catch { store.error = error.localizedDescription }
@@ -847,10 +863,14 @@ private struct GrocerySuggestionsOverlay: View {
 }
 
 private struct GroceryEditor: View {
+    @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
     let onSave: (String, String, GroceryCategory) throws -> Void
     let createdAt: Date?
     let checkedAt: Date?
+    let createdByUID: String?
+    let updatedByUID: String?
+    let updatedAt: Date?
     let preview: Bool
     @State private var name: String
     @State private var quantity: String
@@ -859,7 +879,22 @@ private struct GroceryEditor: View {
     init(item: Grocery, preview: Bool = false, onSave: @escaping (String, String, GroceryCategory) throws -> Void) {
         self.preview = preview
         self.createdAt = item.createdAt; self.checkedAt = item.checkedAt
+        self.createdByUID = item.createdByUID; self.updatedByUID = item.updatedByUID; self.updatedAt = item.updatedAt
         self.onSave = onSave; _name = State(initialValue: item.name); _quantity = State(initialValue: item.quantity); _category = State(initialValue: item.category)
+    }
+    private func actorName(_ id: String?) -> String {
+        if preview {
+            if id == "preview-you" { return "Du" }
+            if id == "preview-member" { return "Alex" }
+        }
+        return store.itemActorName(id)
+    }
+    private func historyRow(_ title: String, date: Date?, actorID: String?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Text(date?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
+            Text(actorName(actorID)).font(.subheadline).foregroundStyle(.secondary)
+        }.padding(.vertical, 3)
     }
     var body: some View {
         NavigationStack {
@@ -867,9 +902,14 @@ private struct GroceryEditor: View {
                 Section("Vara") { TextField("Namn", text: $name); HStack { Text("Mängd"); TextField("Till exempel 2 l", text: $quantity).multilineTextAlignment(.trailing) } }
                 Section("Kategori") { Picker("Kategori", selection: $category) { ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) } } }
                 if preview && showPreviewWatermark { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
-                Section("Datum") {
-                    LabeledContent("Tillagd", value: createdAt?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
+                Section {
+                    historyRow("Tillagd", date: createdAt, actorID: createdByUID)
+                    historyRow("Senast registrerade ändring", date: updatedAt, actorID: updatedByUID)
                     LabeledContent("Senast avbockad", value: checkedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
+                } header: {
+                    Text("Historik")
+                } footer: {
+                    Text("Äldre appversioner registrerar inte vem som ändrat.")
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }.navigationTitle("Ändra vara").navigationBarTitleDisplayMode(.inline)
@@ -920,7 +960,7 @@ private enum ShoppingExamples {
         "week": [
             Grocery(id: "banana", name: "Bananer", quantity: "6 st", checked: false, category: .produce),
             Grocery(id: "cucumber", name: "Gurka", quantity: "1 st", checked: false, category: .produce),
-            Grocery(id: "milk", name: "Mjölk", quantity: "2 l", checked: false, category: .dairy),
+            Grocery(id: "milk", name: "Mjölk", quantity: "2 l", checked: false, category: .dairy, createdAt: Date().addingTimeInterval(-7200), createdByUID: "preview-member", updatedByUID: "preview-you", updatedAt: Date().addingTimeInterval(-900)),
             Grocery(id: "pasta", name: "Pasta", quantity: "500 g", checked: false, category: .pantry),
             Grocery(id: "bread", name: "Bröd", quantity: "1 st", checked: true, category: .bakery, createdAt: Date().addingTimeInterval(-172800), checkedAt: Date().addingTimeInterval(-3600)),
             Grocery(id: "coffee", name: "Kaffe", quantity: "1 pkt", checked: true, category: .drinks, createdAt: Date().addingTimeInterval(-604800), checkedAt: Date().addingTimeInterval(-172800)),

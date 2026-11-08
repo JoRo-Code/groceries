@@ -42,10 +42,32 @@ enum NativeDeletionQA {
             let actorItems = try await store.itemsRef(initialList.id)!.whereField("name", isEqualTo: "Native actor QA").getDocuments(source: .server)
             guard let actorItem = actorItems.documents.first else { throw HandlaError.message("QA item missing") }
             guard (actorItem.get("lastActorUID") as? String) == (pushData ? plan.userID : nil) else { throw HandlaError.message("QA actor feature gate mismatch") }
+            guard actorItem.get("createdByUID") as? String == plan.userID,
+                  actorItem.get("updatedByUID") as? String == plan.userID,
+                  actorItem.get("updatedAt") is Timestamp else { throw HandlaError.message("QA item creation attribution missing") }
+            try store.updateItem(actorItem.documentID, name: "Native audit edited", quantity: "2", category: .other, listID: initialList.id)
+            try await db.waitForPendingWrites()
+            let editedItem = try await actorItem.reference.getDocument(source: .server)
+            guard editedItem.get("name") as? String == "Native audit edited",
+                  editedItem.get("createdByUID") as? String == plan.userID,
+                  editedItem.get("updatedByUID") as? String == plan.userID,
+                  editedItem.get("updatedAt") is Timestamp else { throw HandlaError.message("QA item edit attribution missing") }
             try store.setItemChecked(actorItem.documentID, checked: true, listID: initialList.id)
             try await db.waitForPendingWrites()
             let checkedItem = try await actorItem.reference.getDocument(source: .server)
             guard checkedItem.get("checked") as? Bool == true, (checkedItem.get("lastActorUID") as? String) == (pushData ? plan.userID : nil) else { throw HandlaError.message("QA checked marker missing") }
+            guard checkedItem.get("createdByUID") as? String == plan.userID,
+                  checkedItem.get("updatedByUID") as? String == plan.userID,
+                  checkedItem.get("updatedAt") is Timestamp else { throw HandlaError.message("QA check attribution missing") }
+            try store.setItemChecked(actorItem.documentID, checked: false, listID: initialList.id)
+            try await db.waitForPendingWrites()
+            let restoredItem = try await actorItem.reference.getDocument(source: .server)
+            guard restoredItem.get("checked") as? Bool == false,
+                  restoredItem.get("createdByUID") as? String == plan.userID,
+                  restoredItem.get("updatedByUID") as? String == plan.userID,
+                  restoredItem.get("checkedAt") is Timestamp,
+                  restoredItem.get("updatedAt") is Timestamp else { throw HandlaError.message("QA restore attribution missing") }
+            report["nativeItemAttributionCreateEditCheckRestore"] = true
             report["nativeActorMarkerGateVerified"] = true
             PushNotifications.shared.start(store: store)
             let route: [AnyHashable: Any] = ["eventID": "native-qa-valid", "type": "itemAdded", "recipientUID": plan.userID, "workspaceID": workspaceID, "listID": initialList.id]

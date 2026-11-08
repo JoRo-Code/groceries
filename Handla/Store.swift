@@ -32,10 +32,14 @@ struct Grocery: Identifiable {
     let category: GroceryCategory
     let createdAt: Date?
     let checkedAt: Date?
+    let createdByUID: String?
+    let updatedByUID: String?
+    let updatedAt: Date?
 
-    init(id: String, name: String, quantity: String, checked: Bool, category: GroceryCategory = .other, createdAt: Date? = nil, checkedAt: Date? = nil) {
+    init(id: String, name: String, quantity: String, checked: Bool, category: GroceryCategory = .other, createdAt: Date? = nil, checkedAt: Date? = nil, createdByUID: String? = nil, updatedByUID: String? = nil, updatedAt: Date? = nil) {
         self.id = id; self.name = name; self.quantity = quantity; self.checked = checked; self.category = category
         self.createdAt = createdAt; self.checkedAt = checkedAt
+        self.createdByUID = createdByUID; self.updatedByUID = updatedByUID; self.updatedAt = updatedAt
     }
 }
 struct Invitation: Identifiable { let id: String; let workspaceID: String; let name: String }
@@ -51,6 +55,8 @@ final class Store: ObservableObject {
     @Published private(set) var sessionID = UUID()
     @Published var memberCount = 0
     @Published var members: [HouseholdMember] = []
+    @Published private(set) var membersReady = false
+    @Published private(set) var membersFailed = false
     private var attemptedIdentityFill = false
     @Published var listsPending = false
     @Published var loading = false
@@ -203,7 +209,7 @@ final class Store: ObservableObject {
         workspaceID = nil; workspaceName = ""; lists = []; suggestions = GroceryCatalog.builtIn; owner = false; inviteURL = nil
         notificationRoute = nil; lastViewedListID = nil
         startupSelectionReady = false; startupPreferredListID = nil; startupProfileReady = false; startupListsReady = false
-        memberCount = 0; members = []; attemptedIdentityFill = false; listsPending = false
+        memberCount = 0; members = []; membersReady = false; membersFailed = false; attemptedIdentityFill = false; listsPending = false
     }
     private func watchWorkspace(_ id: String) {
         guard workspaceID != id else { return }
@@ -251,11 +257,12 @@ final class Store: ObservableObject {
                 self.suggestions = GroceryCatalog.merged(custom: GroceryCatalog.workspaceProducts(saved))
             }
         })
-        listeners.append(ref.collection("members").addSnapshotListener { [weak self] snapshot, error in
+        listeners.append(ref.collection("members").addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, error in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionGeneration == generation, self.workspaceID == id else { return }
-                if let error { self.error = error.localizedDescription; return }
+                if let error { self.membersFailed = true; self.error = error.localizedDescription; return }
                 let documents = snapshot?.documents ?? []
+                self.membersReady = snapshot?.metadata.isFromCache == false; self.membersFailed = false
                 self.members = documents.map { document in
                     HouseholdMember(id: document.documentID, role: document.get("role") as? String ?? "member",
                         displayName: document.get("displayName") as? String, isCurrentUser: document.documentID == self.currentUserID)
@@ -407,6 +414,19 @@ final class Store: ObservableObject {
             }
         }
     }
+    func itemActorName(_ actorID: String?) -> String {
+        guard let actorID else { return "Uppgift saknas" }
+        if actorID == currentUserID { return "Du" }
+        if membersFailed { return "Namnet kunde inte hämtas" }
+        guard membersReady else { return "Hämtar namn…" }
+        guard let member = members.first(where: { $0.id == actorID }) else { return "Tidigare medlem" }
+        if member.isCurrentUser { return "Du" }
+        let name = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? "Medlem utan namn" : name
+    }
+    private func itemAuditFields() throws -> [String: Any] {
+        ["updatedByUID": try uid, "updatedAt": FieldValue.serverTimestamp()]
+    }
     func itemsRef(_ listID: String) -> CollectionReference? {
         guard let workspaceID else { return nil }
         return db.collection("workspaces").document(workspaceID).collection("lists").document(listID).collection("items")
@@ -419,6 +439,8 @@ final class Store: ObservableObject {
         let key = SHA256.hash(data: Data(GroceryCatalog.normalized(name).utf8)).map { String(format: "%02x", $0) }.joined()
         let batch = db.batch()
         var data: [String: Any] = ["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "checked": false, "category": category.rawValue, "createdAt": FieldValue.serverTimestamp(), "checkedAt": NSNull()]
+        data["createdByUID"] = try uid
+        data.merge(try itemAuditFields()) { _, new in new }
         if pushDataEnabled { data["lastActorUID"] = try uid; data["lastActionAt"] = FieldValue.serverTimestamp() }
         batch.setData(data, forDocument: items.document())
         batch.setData(["name": name, "category": category.rawValue], forDocument: db.collection("workspaces").document(workspaceID).collection("products").document(key))
@@ -439,7 +461,9 @@ final class Store: ObservableObject {
         guard !name.isEmpty, name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Ange ett varunamn på högst 120 tecken och en mängd på högst 80 tecken.") }
         let key = SHA256.hash(data: Data(GroceryCatalog.normalized(name).utf8)).map { String(format: "%02x", $0) }.joined()
         let batch = db.batch()
-        batch.updateData(["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "category": category.rawValue], forDocument: items.document(id))
+        var update: [String: Any] = ["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "category": category.rawValue]
+        update.merge(try itemAuditFields()) { _, new in new }
+        batch.updateData(update, forDocument: items.document(id))
         batch.setData(["name": name, "category": category.rawValue], forDocument: db.collection("workspaces").document(workspaceID).collection("products").document(key))
         batch.updateData(["lastChangedAt": FieldValue.serverTimestamp()], forDocument: db.collection("workspaces").document(workspaceID).collection("lists").document(listID))
         let generation = sessionGeneration
@@ -468,6 +492,7 @@ final class Store: ObservableObject {
         let workspaceID = try requireWorkspace()
         guard let items = itemsRef(listID) else { return }
         var update: [String: Any] = ["checked": checked]
+        update.merge(try itemAuditFields()) { _, new in new }
         if pushDataEnabled { update["lastActorUID"] = try uid; update["lastActionAt"] = FieldValue.serverTimestamp() }
         if checked { update["checkedAt"] = FieldValue.serverTimestamp() }
         let batch = db.batch()
@@ -666,15 +691,30 @@ extension Store {
         }
     }
     private func scrubActorIdentity(workspace: DocumentReference, userID: String) async throws {
-        guard pushDataEnabled else { return }
+        // Attribution is independent of push. Remove only this user's identity
+        // references and retain useful item dates and everyone else's authorship.
+        let fields = ["createdByUID", "updatedByUID"] + (pushDataEnabled ? ["lastActorUID"] : [])
         let lists = try await workspace.collection("lists").getDocuments(source: .server)
         for list in lists.documents {
-            while true {
-                let page = try await list.reference.collection("items").whereField("lastActorUID", isEqualTo: userID).limit(to: 200).getDocuments(source: .server)
-                if page.isEmpty { break }
-                let batch = db.batch()
-                for item in page.documents { batch.updateData(["lastActorUID": FieldValue.delete(), "lastActionAt": FieldValue.delete()], forDocument: item.reference) }
-                try await batch.commit()
+            for field in fields {
+                while true {
+                    let page = try await list.reference.collection("items").whereField(field, isEqualTo: userID).limit(to: 200).getDocuments(source: .server)
+                    if page.isEmpty { break }
+                    let references = page.documents.map(\.reference)
+                    _ = try await db.runTransaction { transaction, errorPointer in
+                        do {
+                            // Read again inside the transaction: another shopper may
+                            // have become the last editor after the paged query.
+                            let current = try references.map { try transaction.getDocument($0) }
+                            for item in current where item.get(field) as? String == userID {
+                                var removal: [String: Any] = [field: FieldValue.delete()]
+                                if field == "lastActorUID" { removal["lastActionAt"] = FieldValue.delete() }
+                                transaction.updateData(removal, forDocument: item.reference)
+                            }
+                            return true
+                        } catch { errorPointer?.pointee = error as NSError; return nil }
+                    }
+                }
             }
         }
     }
