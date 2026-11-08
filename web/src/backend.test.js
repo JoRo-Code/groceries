@@ -106,3 +106,28 @@ test('bounded history pagination covers tied dates, unknown dates and restores w
   await backend.toggleItem(w,l,'seed-000',true);const rechecked=(await getDoc(doc(backend.db,`${path.split('/documents/')[1]}/seed-000`))).data();assert.ok(rechecked.checkedAt.toMillis()>cutoff.getTime());assert.equal(rechecked.createdAt.toDate().toISOString(),old);
  }finally{await terminate(backend.db);await deleteApp(backend.app)}
 });
+
+test('account cleanup preserves shared data, rechecks successor and recursively purges a solo household', {skip:process.env.HANDLA_EMULATOR_TESTS!=='true'},async()=>{
+ const clients=['owner','guest'].map(role=>createBackend({projectId:'demo-handla'},{appName:`delete-${role}-${crypto.randomUUID()}`,emulators:true}));const [owner,guest]=clients;
+ try{
+  for(const client of clients)await client.signUp(`delete-${crypto.randomUUID()}@example.test`,'TestPassword123!');
+  const w=await owner.createWorkspace('Deletion QA'),l=await owner.addList(w,'Shared');await owner.addItem(w,l,{name:'Behåll',category:'dairy'});
+  const soloPreview=await owner.prepareAccountDeletion();assert.equal(soloPreview.recipient,null);
+  await guest.joinWorkspace((await owner.createInvite(w)).split('/').at(-1));
+  await assert.rejects(owner.deleteAccountData(soloPreview),/Medlemmarna har ändrats/);
+  const unlocked=(await getDoc(doc(owner.db,'workspaces',w))).data();assert.equal(unlocked.deletingBy,undefined);
+  const plan=await owner.prepareAccountDeletion();assert.equal(plan.recipient.id,guest.auth.currentUser.uid);
+  await owner.deleteAccountData(plan);assert.equal((await owner.prepareAccountDeletion()).workspaceID,null);
+  assert.equal((await getDoc(doc(guest.db,'workspaces',w))).data().ownerID,guest.auth.currentUser.uid);
+  assert.equal((await getDocs(collection(guest.db,'workspaces',w,'lists',l,'items'))).size,1);
+  const prefix=`projects/demo-handla/databases/(default)/documents/workspaces/${w}/lists/${l}/items`;
+  const writes=Array.from({length:205},(_,i)=>({update:{name:`${prefix}/bulk-${i}`,fields:{name:{stringValue:`Test ${i}`},quantity:{stringValue:''},checked:{booleanValue:false},createdAt:{timestampValue:new Date().toISOString()},checkedAt:{nullValue:null}}}}));
+  const response=await fetch('http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents:commit',{method:'POST',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({writes})});assert.equal(response.status,200);
+  await guest.deleteAccountData(await guest.prepareAccountDeletion());
+  await guest.deleteAccountData({workspaceID:w}); // Auth cleanup can retry after personal Firestore data is already gone.
+  const root='http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents';
+  const remaining=await(await fetch(`${root}/workspaces/${w}/lists/${l}/items`,{headers:{Authorization:'Bearer owner'}})).json();assert.equal(remaining.documents?.length??0,0);
+  assert.equal((await fetch(`${root}/workspaces/${w}`,{headers:{Authorization:'Bearer owner'}})).status,404);
+  assert.equal((await fetch(`${root}/users/${guest.auth.currentUser.uid}`,{headers:{Authorization:'Bearer owner'}})).status,404);
+ }finally{await Promise.all(clients.map(c=>terminate(c.db)));await Promise.all(clients.map(c=>deleteApp(c.app)))}
+});

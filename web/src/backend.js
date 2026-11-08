@@ -6,7 +6,7 @@ import {
 } from 'firebase/auth';
 import {
   initializeFirestore, memoryLocalCache, connectFirestoreEmulator, collection, doc,
-  getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField, serverTimestamp, query, where, orderBy, documentId, limit, startAfter, getDocsFromServer,
+  getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField, serverTimestamp, query, where, orderBy, documentId, limit, startAfter, getDocsFromServer, runTransaction,
 } from 'firebase/firestore';
 
 export const memberDisplayName = user => (user?.displayName?.trim() || user?.email?.trim() || '').slice(0,160);
@@ -165,6 +165,55 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
         return {items,cursor:{phase:'unknown',snapshot:added.at(-1)??null},hasMore:unknown.size>remaining};
       }
       return {items,cursor:null,hasMore:false};
+    },
+
+    async prepareAccountDeletion() {
+      const userID=uid(),profile=await getDocFromServer(doc(db,'users',userID));
+      if(!profile.exists())return {workspaceID:null,owner:false,recipient:null};
+      const w=profile.data().workspaceID,space=await getDocFromServer(workspace(w));
+      if(!space.exists())throw new Error('Hushållet saknas. Kontakta support innan kontot raderas.');
+      const isOwner=space.data().ownerID===userID;
+      const others=isOwner?await getDocsFromServer(query(collection(workspace(w),'members'),where(documentId(),'!=',userID),orderBy(documentId()),limit(1))):null;
+      const recipient=others?.docs[0];
+      return {workspaceID:w,owner:isOwner,recipient:recipient?{id:recipient.id,displayName:recipient.data().displayName||'Medlem utan namn'}:null};
+    },
+    deleteAccountData(plan) {
+      if(pendingWrites)throw new Error('Vänta tills ändringarna har synkats innan kontot raderas.');
+      const userID=uid();
+      return queued((async()=>{
+        const profileRef=doc(db,'users',userID),profile=await getDocFromServer(profileRef);
+        if(!profile.exists())return;
+        const w=profile.data().workspaceID;
+        if(w!==plan?.workspaceID)throw new Error('Hushållet har ändrats. Bekräfta raderingen igen.');
+        const spaceRef=workspace(w),ownMember=doc(spaceRef,'members',userID);
+        const isOwner=await runTransaction(db,async transaction=>{
+          const [space,currentProfile]=await Promise.all([transaction.get(spaceRef),transaction.get(profileRef)]);
+          if(!space.exists()||currentProfile.data()?.workspaceID!==w)throw new Error('Hushållet har ändrats.');
+          if(space.data().ownerID!==userID){transaction.delete(ownMember);transaction.delete(profileRef);return false}
+          transaction.update(spaceRef,{deletingBy:userID,inviteToken:deleteField()});
+          if(space.data().inviteToken)transaction.delete(doc(db,'invites',space.data().inviteToken));
+          return true;
+        });
+        if(!isOwner)return;
+        const others=await getDocsFromServer(query(collection(spaceRef,'members'),where(documentId(),'!=',userID),orderBy(documentId()),limit(1)));
+        const recipient=others.docs[0];
+        if((recipient?.id??null)!==(plan.recipient?.id??null)){
+          await updateDoc(spaceRef,{deletingBy:deleteField()});
+          throw new Error('Medlemmarna har ändrats. Bekräfta mottagaren igen. Inga listor har raderats.');
+        }
+        if(recipient){
+          await runTransaction(db,async transaction=>{
+            const [space,target]=await Promise.all([transaction.get(spaceRef),transaction.get(recipient.ref)]);
+            if(space.data()?.ownerID!==userID||space.data()?.deletingBy!==userID||!target.exists())throw new Error('Medlemmarna har ändrats. Försök igen.');
+            transaction.update(spaceRef,{ownerID:recipient.id,deletingBy:deleteField(),inviteToken:deleteField()});
+            transaction.update(recipient.ref,{role:'owner'});transaction.delete(ownMember);transaction.delete(profileRef);
+          });return;
+        }
+        const purge=async source=>{for(;;){const page=await getDocsFromServer(query(source,limit(200)));if(page.empty)return;const batch=writeBatch(db);for(const document of page.docs)batch.delete(document.ref);await batch.commit()}};
+        for(;;){const lists=await getDocsFromServer(query(collection(spaceRef,'lists'),limit(100)));if(lists.empty)break;for(const document of lists.docs){await purge(collection(document.ref,'items'));await deleteDoc(document.ref)}}
+        await purge(collection(spaceRef,'products'));
+        const batch=writeBatch(db);batch.delete(spaceRef);batch.delete(ownMember);batch.delete(profileRef);await batch.commit();
+      })());
     },
     async createWorkspace(name) {
       name = displayName(name);

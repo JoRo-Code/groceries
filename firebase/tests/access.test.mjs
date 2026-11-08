@@ -234,3 +234,40 @@ test('household member identities are shared only inside workspace and self upda
  await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:'x'.repeat(161)}));
  await assertFails(updateDoc(doc(guest,'workspaces/home/members/guest'),{displayName:'Robin',email:'private@example.test'}));
 });
+
+const fresh = uid => env.authenticatedContext(uid,{auth_time:Math.floor(Date.now()/1000)}).firestore();
+async function lockHousehold(d) {
+ const b=writeBatch(d);b.update(doc(d,'workspaces/home'),{deletingBy:'owner',inviteToken:deleteField()});b.delete(doc(d,`invites/${token}`));await b.commit();
+}
+test('recently authenticated member can remove only their own linked profile and membership atomically',async()=>{
+ await create();await invite();await join();const d=fresh('guest');
+ await assertFails(deleteDoc(doc(d,'users/guest')));await assertFails(deleteDoc(doc(d,'workspaces/home/members/guest')));
+ const leave=writeBatch(d);leave.delete(doc(d,'users/guest'));leave.delete(doc(d,'workspaces/home/members/guest'));await assertSucceeds(leave.commit());
+ await assertSucceeds(getDoc(doc(db('owner'),'workspaces/home')));await assertFails(getDoc(doc(d,'workspaces/home')));
+});
+test('locked household blocks new joins and edits; owner can unlock before reconfirming deletion',async()=>{
+ await create();await invite();await join();const d=fresh('owner');
+ await assertFails(updateDoc(doc(fresh('guest'),'workspaces/home'),{deletingBy:'guest',inviteToken:deleteField()}));
+ await assertFails(updateDoc(doc(db('owner'),'workspaces/home'),{deletingBy:'owner',inviteToken:deleteField()}));
+ await lockHousehold(d);await assertFails(join('late'));
+ await assertFails(setDoc(doc(fresh('guest'),'workspaces/home/products/new'),{name:'Test'}));
+ await assertFails(deleteDoc(doc(fresh('guest'),'workspaces/home/lists/week')));
+ await assertSucceeds(updateDoc(doc(d,'workspaces/home'),{deletingBy:deleteField()}));
+ await assertSucceeds(updateDoc(doc(fresh('guest'),'workspaces/home/lists/week'),{name:'Bevarad'}));
+});
+test('owner transfer preserves household and requires existing successor plus atomic own removal',async()=>{
+ await create();await invite();await join();const d=fresh('owner');await lockHousehold(d);
+ await assertFails(updateDoc(doc(d,'workspaces/home'),{ownerID:'guest',deletingBy:deleteField()}));
+ const b=writeBatch(d);b.update(doc(d,'workspaces/home'),{ownerID:'guest',deletingBy:deleteField()});b.update(doc(d,'workspaces/home/members/guest'),{role:'owner'});b.delete(doc(d,'workspaces/home/members/owner'));b.delete(doc(d,'users/owner'));await assertSucceeds(b.commit());
+ assert.equal((await getDoc(doc(db('guest'),'workspaces/home'))).data().ownerID,'guest');
+ await assertSucceeds(getDoc(doc(db('guest'),'workspaces/home/lists/week')));await assertFails(getDoc(doc(d,'workspaces/home')));
+});
+test('deletion can resume after reauthentication and cannot transfer to a member who left',async()=>{
+ await create();await invite();await join();const d=fresh('owner');await lockHousehold(d);
+ const guest=fresh('guest'),leave=writeBatch(guest);leave.delete(doc(guest,'users/guest'));leave.delete(doc(guest,'workspaces/home/members/guest'));await leave.commit();
+ const bad=writeBatch(d);bad.update(doc(d,'workspaces/home'),{ownerID:'guest',deletingBy:deleteField()});bad.set(doc(d,'workspaces/home/members/guest'),{role:'owner'});bad.delete(doc(d,'workspaces/home/members/owner'));bad.delete(doc(d,'users/owner'));await assertFails(bad.commit());
+ const stale=env.authenticatedContext('owner',{auth_time:Math.floor(Date.now()/1000)-600}).firestore();await assertFails(deleteDoc(doc(stale,'workspaces/home/lists/week')));
+ await assertSucceeds(deleteDoc(doc(d,'workspaces/home/lists/week')));
+ const finish=writeBatch(d);finish.delete(doc(d,'workspaces/home'));finish.delete(doc(d,'workspaces/home/members/owner'));finish.delete(doc(d,'users/owner'));await assertSucceeds(finish.commit());
+ await env.withSecurityRulesDisabled(async context=>{assert.equal((await getDoc(doc(context.firestore(),'workspaces/home'))).exists(),false);assert.equal((await getDoc(doc(context.firestore(),'users/owner'))).exists(),false)});
+});

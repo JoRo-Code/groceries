@@ -7,6 +7,12 @@ service cloud.firestore {
     function memberPath(w) { return /databases/$(database)/documents/workspaces/$(w)/members/$(request.auth.uid); }
     function member(w) { return signedIn() && exists(memberPath(w)); }
     function owner(w) { return signedIn() && get(workspacePath(w)).data.ownerID == request.auth.uid; }
+    function recentLogin() { return signedIn() && request.auth.token.get('auth_time', 0) is int
+      && request.time.toMillis() - request.auth.token.get('auth_time', 0) * 1000 >= 0
+      && request.time.toMillis() - request.auth.token.get('auth_time', 0) * 1000 < 300000; }
+    function unlocked(w) { return !('deletingBy' in get(workspacePath(w)).data); }
+    function canWrite(w) { return member(w) && unlocked(w); }
+    function purging(w) { return owner(w) && recentLogin() && get(workspacePath(w)).data.get('deletingBy', '') == request.auth.uid; }
     function text(value, max) { return value is string && value.size() > 0 && value.size() <= max; }
     // Old documents have no category; explicit values must use stable catalogue IDs.
     function validCategory(data) {
@@ -19,11 +25,13 @@ service cloud.firestore {
     function unassigned() { return !exists(userPath()); }
     function validInvite(w, token) {
       let invite = get(/databases/$(database)/documents/invites/$(token));
-      return invite.data.workspaceID == w && invite.data.expiresAt > request.time
+      return unlocked(w) && invite.data.workspaceID == w && invite.data.expiresAt > request.time
         && get(workspacePath(w)).data.inviteToken == token;
     }
     match /users/{uid} {
       allow get: if signedIn() && uid == request.auth.uid;
+      allow delete: if signedIn() && uid == request.auth.uid && recentLogin()
+        && !existsAfter(memberPath(resource.data.workspaceID));
       allow create: if signedIn() && uid == request.auth.uid
         && request.resource.data.keys().hasOnly(['workspaceID'])
         && request.resource.data.workspaceID is string
@@ -37,13 +45,32 @@ service cloud.firestore {
         && request.resource.data.ownerID == request.auth.uid
         && getAfter(userPath()).data.workspaceID == w
         && getAfter(memberPath(w)).data.role == 'owner';
-      allow update: if owner(w)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteToken']);
+      allow update: if owner(w) && (
+        (unlocked(w) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteToken']))
+        || (recentLogin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletingBy','inviteToken'])
+          && request.resource.data.get('deletingBy','') == request.auth.uid && !('inviteToken' in request.resource.data))
+        || (purging(w) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletingBy'])
+          && !('deletingBy' in request.resource.data))
+        || (purging(w) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerID','deletingBy','inviteToken'])
+          && request.resource.data.ownerID is string && request.resource.data.ownerID != request.auth.uid
+          && !('deletingBy' in request.resource.data) && !('inviteToken' in request.resource.data)
+          && exists(/databases/$(database)/documents/workspaces/$(w)/members/$(request.resource.data.ownerID))
+          && getAfter(/databases/$(database)/documents/workspaces/$(w)/members/$(request.resource.data.ownerID)).data.role == 'owner'
+          && !existsAfter(memberPath(w)) && !existsAfter(userPath())));
+      allow delete: if purging(w) && !existsAfter(memberPath(w)) && !existsAfter(userPath());
       match /members/{uid} {
         allow read: if member(w);
-        allow update: if member(w) && request.auth.uid == uid
+        allow delete: if signedIn() && request.auth.uid == uid && recentLogin() && !existsAfter(userPath())
+          && (get(workspacePath(w)).data.ownerID != uid || !existsAfter(workspacePath(w))
+            || getAfter(workspacePath(w)).data.ownerID != uid);
+        allow update: if (canWrite(w) && request.auth.uid == uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
-          && text(request.resource.data.displayName,160);
+          && text(request.resource.data.displayName,160))
+          || (purging(w) && uid != request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+            && request.resource.data.role == 'owner'
+            && getAfter(workspacePath(w)).data.ownerID == uid
+            && !existsAfter(memberPath(w)) && !existsAfter(userPath()));
         allow create: if signedIn() && uid == request.auth.uid && unassigned()
           && getAfter(userPath()).data.workspaceID == w
           && validIdentity(request.resource.data)
@@ -57,12 +84,15 @@ service cloud.firestore {
       match /lists/{list} {
         allow read: if member(w);
         allow create: if signedIn() && existsAfter(memberPath(w))
+          && (!exists(workspacePath(w)) || unlocked(w))
           && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
-        allow update: if member(w)
+        allow delete: if purging(w);
+        allow update: if canWrite(w)
           && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
         match /items/{item} {
-          allow read, delete: if member(w);
-          function validItem() { return member(w)
+          allow read: if member(w);
+          allow delete: if canWrite(w) || purging(w);
+          function validItem() { return canWrite(w)
             && exists(/databases/$(database)/documents/workspaces/$(w)/lists/$(list))
             && request.resource.data.keys().hasOnly(['name', 'quantity', 'checked', 'category', 'createdAt', 'checkedAt'])
             && (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp)
@@ -84,7 +114,8 @@ service cloud.firestore {
       }
       match /products/{product} {
         allow read: if member(w);
-        allow create, update: if member(w) && request.resource.data.keys().hasOnly(['name', 'category'])
+        allow delete: if purging(w);
+        allow create, update: if canWrite(w) && request.resource.data.keys().hasOnly(['name', 'category'])
           && validCategory(request.resource.data)
           && text(request.resource.data.name, 120);
       }
@@ -92,7 +123,7 @@ service cloud.firestore {
     match /invites/{token} {
       allow get: if signedIn() && resource.data.expiresAt > request.time
         && get(workspacePath(resource.data.workspaceID)).data.inviteToken == token;
-      allow create: if signedIn() && owner(request.resource.data.workspaceID)
+      allow create: if signedIn() && owner(request.resource.data.workspaceID) && unlocked(request.resource.data.workspaceID)
         && token.matches('^[a-f0-9-]{72}$')
         && request.resource.data.keys().hasOnly(['workspaceID', 'name', 'expiresAt'])
         && request.resource.data.name == get(workspacePath(request.resource.data.workspaceID)).data.name
