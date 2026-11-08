@@ -1,3 +1,4 @@
+import { withAppAuthDomain } from './authDomain.js';
 import { invitationOrigin } from './inviteLinks.js';
 import { initializeApp } from 'firebase/app';
 import {
@@ -333,6 +334,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
 const env = import.meta.env || {};
 let config;
 try { config = JSON.parse(env.VITE_FIREBASE_CONFIG || '{}'); } catch { config = {}; }
+config = withAppAuthDomain(config, typeof location !== 'undefined' ? location.hostname : undefined);
 export const configured = Boolean(config.apiKey && config.projectId && config.appId);
 const backend = configured ? createBackend(config, { emulators: env.VITE_USE_EMULATORS === 'true', pushDataEnabled:env.VITE_PUSH_DATA_ENABLED === 'true' }) : null;
 const call = name => (...args) => {

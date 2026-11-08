@@ -1,0 +1,37 @@
+import fs from 'node:fs';
+import {chromium,expect} from '/Users/joro/src/smile/node_modules/@playwright/test/index.mjs';
+const base=process.env.PALISTY_AUTH_QA_URL||'https://app.palisty.com';
+const callback=process.env.PALISTY_AUTH_QA_CALLBACK||'https://app.palisty.com/__/auth/handler';
+const credentials=JSON.parse(fs.readFileSync('/tmp/handla-app-review-credentials.json','utf8'));
+const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+try {
+ const page=await browser.newPage({viewport:{width:390,height:844}});
+ const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(base);
+ const appleOpened=page.waitForEvent('popup');
+ await page.getByRole('button',{name:'Fortsätt med Apple',exact:true}).click();
+ const apple=await appleOpened; await apple.waitForURL(u=>u.hostname==='appleid.apple.com',{timeout:30000});
+ await apple.waitForLoadState('domcontentloaded');
+ const appleURL=new URL(apple.url());
+ expect(appleURL.searchParams.get('client_id')).toBe('se.groceriesros.handla.web');
+ expect(appleURL.searchParams.get('redirect_uri')).toBe(callback);
+ expect(await apple.locator('body').innerText()).not.toMatch(/invalid_client|invalid_request/i);
+ await apple.close();await page.reload();
+ const googleOpened=page.waitForEvent('popup');
+ await page.getByRole('button',{name:'Fortsätt med Google',exact:true}).click();
+ const google=await googleOpened;await google.waitForURL(u=>u.hostname==='accounts.google.com',{timeout:30000});
+ await google.waitForLoadState('domcontentloaded');
+ const googleCallback=new URL(google.url()).searchParams.get('redirect_uri');
+ expect(googleCallback).toBe(callback);
+ expect(await google.locator('body').innerText()).not.toMatch(/redirect_uri_mismatch|Error 400/);
+ await google.close();await page.reload();
+ await page.getByRole('button',{name:'Fortsätt med e-post',exact:true}).click();
+ await page.getByLabel('E-postadress',{exact:true}).fill(credentials.email);
+ await page.getByLabel('Lösenord',{exact:true}).fill(credentials.password);
+ await page.getByRole('button',{name:'Logga in',exact:true}).click();
+ await expect(page.getByRole('button',{name:/^Mina listor,/})).toBeVisible({timeout:30000});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.reload();await expect(page.getByRole('button',{name:/^Mina listor,/})).toBeVisible({timeout:30000});
+ expect(errors).toEqual([]);
+ console.log(JSON.stringify({url:base,callback,emailLogin:true,sessionSurvivesReload:true,googleAuthorizationStart:true,appleAuthorizationStart:true,providerPersonalLoginAttempted:false,mobileNoOverflow:true,pageErrors:0}));
+} finally {await browser.close();}
