@@ -35,6 +35,8 @@ targets:
       path: Handla/Info.plist
       properties:
         CFBundleDisplayName: Handla
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "2"
         UILaunchScreen: {}
         InviteHost: $(INVITE_HOST)
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]

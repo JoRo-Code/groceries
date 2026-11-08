@@ -15,11 +15,13 @@
 		DC0DC6C44655A116D3ED64DC /* GroceryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E65E7EF1636FB0C346E15BFB /* GroceryCatalog.swift */; };
 		F03AF0F7E4E3991E91E93307 /* HandlaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5E6E59CA80CD1DBDFC3C84 /* HandlaApp.swift */; };
 		F8674B47D744C50F465923A7 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 7CF8924DFB59BEB6D7B11DF1 /* GoogleService-Info.plist */; };
+		FBA90A3452D1C5786EC10931 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 500D4FF9774BFE64551C53C8 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		11952F34143258DF5BAFE22C /* Handla.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Handla.entitlements; sourceTree = "<group>"; };
 		4B5E6E59CA80CD1DBDFC3C84 /* HandlaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandlaApp.swift; sourceTree = "<group>"; };
+		500D4FF9774BFE64551C53C8 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		7CF8924DFB59BEB6D7B11DF1 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		9517397C408B768B47CBF0E9 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A7ADA7AEE2B55451B1351E62 /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
@@ -67,6 +69,7 @@
 				11952F34143258DF5BAFE22C /* Handla.entitlements */,
 				4B5E6E59CA80CD1DBDFC3C84 /* HandlaApp.swift */,
 				9517397C408B768B47CBF0E9 /* Info.plist */,
+				500D4FF9774BFE64551C53C8 /* PrivacyInfo.xcprivacy */,
 				A7ADA7AEE2B55451B1351E62 /* Store.swift */,
 				C9A6443C2D4D833A6139450B /* Views.swift */,
 			);
@@ -145,6 +148,7 @@
 			files = (
 				BEAE25916E281E2477C4F7E4 /* Assets.xcassets in Resources */,
 				F8674B47D744C50F465923A7 /* GoogleService-Info.plist in Resources */,
+				FBA90A3452D1C5786EC10931 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

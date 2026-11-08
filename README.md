@@ -2,7 +2,7 @@
 
 Gemensamma inköpslistor för webben och iPhone, med Firebase Authentication, Firestore och Firebase Hosting. Webbappen är publicerad på [groceries-ros.web.app](https://groceries-ros.web.app). Arbetsnamnet är Handla. Ett workspace kallas **hushåll** i gränssnittet.
 
-Webbappen finns i [`web/`](web/README.md) och använder samma hushåll, listor och Firebase-databas. Den kan användas direkt i webbläsaren och läggas på hemskärmen. Native-appen är konfigurerad för `se.groceriesros.handla` och Apple-team `P92GB9QRA5`. Firebase-konfigurationen finns lokalt och är Git-ignorerad; fysisk iPhone-signering återstår. Se [native-inställningar](docs/native-setup.md).
+Webbappen finns i [`web/`](web/README.md) och använder samma hushåll, listor och Firebase-databas. Den kan användas direkt i webbläsaren och läggas på hemskärmen. Native-appen är konfigurerad för `se.groceriesros.handla` och Apple-team `P92GB9QRA5`. Firebase-konfigurationen finns lokalt och är Git-ignorerad. Ett signerat Release-arkiv och distributionssignerad IPA har skapats; version 1.0 (2) har laddats upp till App Store Connect som **Handla tillsammans**. Se [TestFlight-distribution](distribution/README.md) och [native-inställningar](docs/native-setup.md). Verifiering på fysisk iPhone återstår.
 
 E-post, Google och Apple är aktiverade i Firebase och webbappen. Google- och Apple-knapparna har verifierats öppna respektive leverantörs riktiga inloggningssida. Användaren har därefter bekräftat en lyckad fullständig Apple-inloggning på webben. Inga personliga kontouppgifter fylldes i under agentens kontroll. Se [Apple-inställningarna](firebase/APPLE_SETUP.md).
 
@@ -67,7 +67,7 @@ En manuell checklista för den konfigurerade appen finns i [qa/acceptance.md](qa
 
 ## Kvar före App Store
 
-Denna version är en utvecklingsgrund, inte en publiceringsklar app. Verifiera Apple-inloggning, Universal Links och tvåanvändarsynkning i det verkliga Firebase-projektet. Lägg till kontoradering inklusive Apple-tokenåterkallning, hantering av medlemmar/utträde/ägarbyte, appikon, integritetspolicy och App Store-metadata. Lägg sedan in appens riktiga App Store-länk på inbjudningssidan.
+Denna version är en utvecklingsgrund, inte en publiceringsklar app. Verifiera Apple-inloggning, Universal Links och tvåanvändarsynkning i det verkliga Firebase-projektet. Lägg till kontoradering inklusive Apple-tokenåterkallning, hantering av medlemmar/utträde/ägarbyte, integritetspolicy och App Store-metadata. Lägg sedan in appens riktiga App Store-länk på inbjudningssidan.
 
 Det finns inget automatiskt flöde från App Store-installation tillbaka till inbjudan: mottagaren öppnar originalinbjudan igen eller klistrar in länken i appen. En användare som redan tillhör ett annat hushåll kan inte byta i denna version.
 
