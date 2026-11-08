@@ -138,6 +138,7 @@ struct ListsView: View {
     let showAddInitially: Bool
     @State private var showingOverview: Bool
     @State private var selectedID: String?
+    @State private var startupSelection = ListStartupSelection()
     @State private var exampleLists = ShoppingExamples.lists
     @State private var exampleItems = ShoppingExamples.items
 
@@ -153,7 +154,7 @@ struct ListsView: View {
                 ListOverview(lists: lists, preview: preview, canGoBack: selected != nil,
                     exampleItems: exampleItems,
                     onBack: { showingOverview = false },
-                    onSelect: { list in selectedID = list.id; showingOverview = false; if !preview { do { try store.rememberViewedList(list.id) } catch { store.error = error.localizedDescription } } },
+                    onSelect: { list in startupSelection.interacted = true; selectedID = list.id; showingOverview = false; if !preview { do { try store.rememberViewedList(list.id) } catch { store.error = error.localizedDescription } } },
                     onCreate: { name in
                         if preview {
                             let list = ShoppingList(id: UUID().uuidString, name: name)
@@ -175,9 +176,15 @@ struct ListsView: View {
         }
         .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear { pinSelection(); openNotificationList() }
+        .onAppear { pinSelection(); openNotificationList(); reconcileStartupSelection() }
         .onChange(of: lists.map(\.id)) { _, _ in pinSelection(); openNotificationList() }
         .onChange(of: store.notificationRoute) { _, _ in openNotificationList() }
+        .onChange(of: store.startupSelectionReady) { _, _ in reconcileStartupSelection() }
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in startupSelection.interacted = true })
+    }
+    private func reconcileStartupSelection() {
+        guard !preview else { return }
+        selectedID = startupSelection.reconcile(current: selectedID, preferred: store.startupPreferredListID, available: lists.map(\.id), serverReady: store.startupSelectionReady)
     }
     private func pinSelection() {
         guard selectedID == nil || !lists.contains(where: { $0.id == selectedID }) else { return }
@@ -185,6 +192,7 @@ struct ListsView: View {
     }
     private func openNotificationList() {
         guard !preview, let route = store.notificationRoute, route.workspaceID == store.workspaceID, lists.contains(where: { $0.id == route.listID }) else { return }
+        startupSelection.interacted = true
         selectedID = route.listID; showingOverview = false; store.notificationRoute = nil
         do { try store.rememberViewedList(route.listID) } catch { store.error = error.localizedDescription }
     }

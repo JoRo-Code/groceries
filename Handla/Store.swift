@@ -65,6 +65,10 @@ final class Store: ObservableObject {
     @Published var invitation: Invitation?
     @Published var inviteURL: URL?
     @Published var lastViewedListID: String?
+    @Published private(set) var startupSelectionReady = false
+    private(set) var startupPreferredListID: String?
+    private var startupProfileReady = false
+    private var startupListsReady = false
     @Published var notificationRoute: NotificationListRoute?
     private var nonce = ""
     private var currentUserID: String?
@@ -114,6 +118,11 @@ final class Store: ObservableObject {
                         if let id = snapshot.get("workspaceID") as? String {
                             self.watchWorkspace(id)
                             self.lastViewedListID = snapshot.get("lastViewedListID") as? String
+                            if !snapshot.metadata.isFromCache, !self.startupProfileReady {
+                                self.startupPreferredListID = self.lastViewedListID
+                                self.startupProfileReady = true
+                                self.startupSelectionReady = self.startupListsReady
+                            }
                             self.loading = false
                         } else if !snapshot.metadata.isFromCache {
                             self.resetWorkspace()
@@ -193,6 +202,7 @@ final class Store: ObservableObject {
         listeners.forEach { $0.remove() }; listeners = []
         workspaceID = nil; workspaceName = ""; lists = []; suggestions = GroceryCatalog.builtIn; owner = false; inviteURL = nil
         notificationRoute = nil; lastViewedListID = nil
+        startupSelectionReady = false; startupPreferredListID = nil; startupProfileReady = false; startupListsReady = false
         memberCount = 0; members = []; attemptedIdentityFill = false; listsPending = false
     }
     private func watchWorkspace(_ id: String) {
@@ -221,6 +231,10 @@ final class Store: ObservableObject {
                     if left != right { return left > right }
                     let comparison = $0.name.localizedStandardCompare($1.name)
                     return comparison == .orderedSame ? $0.id < $1.id : comparison == .orderedAscending
+                }
+                if let snapshot, !snapshot.metadata.isFromCache, !snapshot.metadata.hasPendingWrites {
+                    self.startupListsReady = true
+                    self.startupSelectionReady = self.startupProfileReady
                 }
             }
         })
