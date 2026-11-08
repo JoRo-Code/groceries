@@ -59,3 +59,5 @@ After root deployed the isolated audit rules, a fresh Rules API read verified ex
 - Device/notification rule match absent; pending push permissions were not released.
 
 Live production verification (`qa/browser/live-item-attribution.mjs`) passed using only the isolated App Review account: item creation/edit/check/restore preserved creator and creation time, recorded current editor/server timestamp, retained last checkoff date, and did not emit push markers. Mobile item details showed both author rows; the temporary item was removed. The first immediate post-deployment attempt was denied while rules propagated; a fresh-client retry passed without changing rules. Root also verified the demo details at 320, 390 and 1280 px.
+
+The isolated QA product suggestion was also removed after the live check. The live QA script now removes that exact generated product through the existing Firebase CLI session; normal app users receive no broader product-delete permission.
