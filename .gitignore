@@ -22,3 +22,5 @@ playwright-report/
 test-results/
 
 qa/browser/e2e-failure*.png
+
+qa/browser/*failure*.png

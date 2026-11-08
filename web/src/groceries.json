@@ -1,0 +1,1238 @@
+[
+  {
+    "name": "Äpplen",
+    "category": "produce"
+  },
+  {
+    "name": "Bananer",
+    "category": "produce"
+  },
+  {
+    "name": "Apelsiner",
+    "category": "produce"
+  },
+  {
+    "name": "Päron",
+    "category": "produce"
+  },
+  {
+    "name": "Clementiner",
+    "category": "produce"
+  },
+  {
+    "name": "Citron",
+    "category": "produce"
+  },
+  {
+    "name": "Lime",
+    "category": "produce"
+  },
+  {
+    "name": "Grapefrukt",
+    "category": "produce"
+  },
+  {
+    "name": "Vindruvor",
+    "category": "produce"
+  },
+  {
+    "name": "Kiwi",
+    "category": "produce"
+  },
+  {
+    "name": "Mango",
+    "category": "produce"
+  },
+  {
+    "name": "Ananas",
+    "category": "produce"
+  },
+  {
+    "name": "Melon",
+    "category": "produce"
+  },
+  {
+    "name": "Vattenmelon",
+    "category": "produce"
+  },
+  {
+    "name": "Jordgubbar",
+    "category": "produce"
+  },
+  {
+    "name": "Blåbär",
+    "category": "produce"
+  },
+  {
+    "name": "Hallon",
+    "category": "produce"
+  },
+  {
+    "name": "Avokado",
+    "category": "produce"
+  },
+  {
+    "name": "Tomater",
+    "category": "produce"
+  },
+  {
+    "name": "Körsbärstomater",
+    "category": "produce"
+  },
+  {
+    "name": "Gurka",
+    "category": "produce"
+  },
+  {
+    "name": "Paprika",
+    "category": "produce"
+  },
+  {
+    "name": "Morötter",
+    "category": "produce"
+  },
+  {
+    "name": "Potatis",
+    "category": "produce"
+  },
+  {
+    "name": "Sötpotatis",
+    "category": "produce"
+  },
+  {
+    "name": "Gul lök",
+    "category": "produce"
+  },
+  {
+    "name": "Röd lök",
+    "category": "produce"
+  },
+  {
+    "name": "Vitlök",
+    "category": "produce"
+  },
+  {
+    "name": "Purjolök",
+    "category": "produce"
+  },
+  {
+    "name": "Salladslök",
+    "category": "produce"
+  },
+  {
+    "name": "Broccoli",
+    "category": "produce"
+  },
+  {
+    "name": "Blomkål",
+    "category": "produce"
+  },
+  {
+    "name": "Vitkål",
+    "category": "produce"
+  },
+  {
+    "name": "Rödkål",
+    "category": "produce"
+  },
+  {
+    "name": "Grönkål",
+    "category": "produce"
+  },
+  {
+    "name": "Spenat",
+    "category": "produce"
+  },
+  {
+    "name": "Isbergssallad",
+    "category": "produce"
+  },
+  {
+    "name": "Romansallad",
+    "category": "produce"
+  },
+  {
+    "name": "Ruccola",
+    "category": "produce"
+  },
+  {
+    "name": "Zucchini",
+    "category": "produce"
+  },
+  {
+    "name": "Aubergine",
+    "category": "produce"
+  },
+  {
+    "name": "Champinjoner",
+    "category": "produce"
+  },
+  {
+    "name": "Rödbetor",
+    "category": "produce"
+  },
+  {
+    "name": "Palsternacka",
+    "category": "produce"
+  },
+  {
+    "name": "Rotselleri",
+    "category": "produce"
+  },
+  {
+    "name": "Stjälkselleri",
+    "category": "produce"
+  },
+  {
+    "name": "Sparris",
+    "category": "produce"
+  },
+  {
+    "name": "Rädisor",
+    "category": "produce"
+  },
+  {
+    "name": "Ingefära",
+    "category": "produce"
+  },
+  {
+    "name": "Chili",
+    "category": "produce"
+  },
+  {
+    "name": "Dill",
+    "category": "produce"
+  },
+  {
+    "name": "Persilja",
+    "category": "produce"
+  },
+  {
+    "name": "Basilika",
+    "category": "produce"
+  },
+  {
+    "name": "Koriander",
+    "category": "produce"
+  },
+  {
+    "name": "Gräslök",
+    "category": "produce"
+  },
+  {
+    "name": "Mjölk",
+    "category": "dairy"
+  },
+  {
+    "name": "Mellanmjölk",
+    "category": "dairy"
+  },
+  {
+    "name": "Lättmjölk",
+    "category": "dairy"
+  },
+  {
+    "name": "Standardmjölk",
+    "category": "dairy"
+  },
+  {
+    "name": "Laktosfri mjölk",
+    "category": "dairy"
+  },
+  {
+    "name": "Havredryck",
+    "category": "dairy"
+  },
+  {
+    "name": "Sojadryck",
+    "category": "dairy"
+  },
+  {
+    "name": "Mandeldryck",
+    "category": "dairy"
+  },
+  {
+    "name": "Filmjölk",
+    "category": "dairy"
+  },
+  {
+    "name": "Yoghurt",
+    "category": "dairy"
+  },
+  {
+    "name": "Grekisk yoghurt",
+    "category": "dairy"
+  },
+  {
+    "name": "Vaniljyoghurt",
+    "category": "dairy"
+  },
+  {
+    "name": "Kvarg",
+    "category": "dairy"
+  },
+  {
+    "name": "Keso",
+    "category": "dairy"
+  },
+  {
+    "name": "Crème fraiche",
+    "category": "dairy"
+  },
+  {
+    "name": "Gräddfil",
+    "category": "dairy"
+  },
+  {
+    "name": "Vispgrädde",
+    "category": "dairy"
+  },
+  {
+    "name": "Matlagningsgrädde",
+    "category": "dairy"
+  },
+  {
+    "name": "Smör",
+    "category": "dairy"
+  },
+  {
+    "name": "Margarin",
+    "category": "dairy"
+  },
+  {
+    "name": "Ost",
+    "category": "dairy"
+  },
+  {
+    "name": "Hushållsost",
+    "category": "dairy"
+  },
+  {
+    "name": "Riven ost",
+    "category": "dairy"
+  },
+  {
+    "name": "Parmesan",
+    "category": "dairy"
+  },
+  {
+    "name": "Mozzarella",
+    "category": "dairy"
+  },
+  {
+    "name": "Fetaost",
+    "category": "dairy"
+  },
+  {
+    "name": "Halloumi",
+    "category": "dairy"
+  },
+  {
+    "name": "Färskost",
+    "category": "dairy"
+  },
+  {
+    "name": "Ägg",
+    "category": "dairy"
+  },
+  {
+    "name": "Kycklingfilé",
+    "category": "meat"
+  },
+  {
+    "name": "Kycklinglår",
+    "category": "meat"
+  },
+  {
+    "name": "Hel kyckling",
+    "category": "meat"
+  },
+  {
+    "name": "Nötfärs",
+    "category": "meat"
+  },
+  {
+    "name": "Blandfärs",
+    "category": "meat"
+  },
+  {
+    "name": "Fläskfärs",
+    "category": "meat"
+  },
+  {
+    "name": "Fläskfilé",
+    "category": "meat"
+  },
+  {
+    "name": "Fläskkotletter",
+    "category": "meat"
+  },
+  {
+    "name": "Bacon",
+    "category": "meat"
+  },
+  {
+    "name": "Falukorv",
+    "category": "meat"
+  },
+  {
+    "name": "Grillkorv",
+    "category": "meat"
+  },
+  {
+    "name": "Prinskorv",
+    "category": "meat"
+  },
+  {
+    "name": "Köttbullar",
+    "category": "meat"
+  },
+  {
+    "name": "Skinka",
+    "category": "meat"
+  },
+  {
+    "name": "Salami",
+    "category": "meat"
+  },
+  {
+    "name": "Leverpastej",
+    "category": "meat"
+  },
+  {
+    "name": "Rostbiff",
+    "category": "meat"
+  },
+  {
+    "name": "Entrecôte",
+    "category": "meat"
+  },
+  {
+    "name": "Högrev",
+    "category": "meat"
+  },
+  {
+    "name": "Lax",
+    "category": "fish"
+  },
+  {
+    "name": "Laxfilé",
+    "category": "fish"
+  },
+  {
+    "name": "Torsk",
+    "category": "fish"
+  },
+  {
+    "name": "Sej",
+    "category": "fish"
+  },
+  {
+    "name": "Räkor",
+    "category": "fish"
+  },
+  {
+    "name": "Kräftor",
+    "category": "fish"
+  },
+  {
+    "name": "Musslor",
+    "category": "fish"
+  },
+  {
+    "name": "Sill",
+    "category": "fish"
+  },
+  {
+    "name": "Gravad lax",
+    "category": "fish"
+  },
+  {
+    "name": "Rökt lax",
+    "category": "fish"
+  },
+  {
+    "name": "Makrill",
+    "category": "fish"
+  },
+  {
+    "name": "Kaviar",
+    "category": "fish"
+  },
+  {
+    "name": "Bröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Rostbröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Formfranska",
+    "category": "bakery"
+  },
+  {
+    "name": "Fullkornsbröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Surdegsbröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Baguette",
+    "category": "bakery"
+  },
+  {
+    "name": "Frallor",
+    "category": "bakery"
+  },
+  {
+    "name": "Knäckebröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Tunnbröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Tortillabröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Hamburgerbröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Korvbröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Pitabröd",
+    "category": "bakery"
+  },
+  {
+    "name": "Skorpor",
+    "category": "bakery"
+  },
+  {
+    "name": "Kanelbullar",
+    "category": "bakery"
+  },
+  {
+    "name": "Croissanter",
+    "category": "bakery"
+  },
+  {
+    "name": "Pasta",
+    "category": "pantry"
+  },
+  {
+    "name": "Spaghetti",
+    "category": "pantry"
+  },
+  {
+    "name": "Makaroner",
+    "category": "pantry"
+  },
+  {
+    "name": "Lasagneplattor",
+    "category": "pantry"
+  },
+  {
+    "name": "Ris",
+    "category": "pantry"
+  },
+  {
+    "name": "Jasminris",
+    "category": "pantry"
+  },
+  {
+    "name": "Bulgur",
+    "category": "pantry"
+  },
+  {
+    "name": "Couscous",
+    "category": "pantry"
+  },
+  {
+    "name": "Quinoa",
+    "category": "pantry"
+  },
+  {
+    "name": "Nudlar",
+    "category": "pantry"
+  },
+  {
+    "name": "Havregryn",
+    "category": "pantry"
+  },
+  {
+    "name": "Müsli",
+    "category": "pantry"
+  },
+  {
+    "name": "Granola",
+    "category": "pantry"
+  },
+  {
+    "name": "Cornflakes",
+    "category": "pantry"
+  },
+  {
+    "name": "Vetemjöl",
+    "category": "pantry"
+  },
+  {
+    "name": "Rågmjöl",
+    "category": "pantry"
+  },
+  {
+    "name": "Strösocker",
+    "category": "pantry"
+  },
+  {
+    "name": "Florsocker",
+    "category": "pantry"
+  },
+  {
+    "name": "Farinsocker",
+    "category": "pantry"
+  },
+  {
+    "name": "Bakpulver",
+    "category": "pantry"
+  },
+  {
+    "name": "Bikarbonat",
+    "category": "pantry"
+  },
+  {
+    "name": "Vaniljsocker",
+    "category": "pantry"
+  },
+  {
+    "name": "Jäst",
+    "category": "pantry"
+  },
+  {
+    "name": "Kakao",
+    "category": "pantry"
+  },
+  {
+    "name": "Ströbröd",
+    "category": "pantry"
+  },
+  {
+    "name": "Potatismjöl",
+    "category": "pantry"
+  },
+  {
+    "name": "Majsstärkelse",
+    "category": "pantry"
+  },
+  {
+    "name": "Salt",
+    "category": "pantry"
+  },
+  {
+    "name": "Flingsalt",
+    "category": "pantry"
+  },
+  {
+    "name": "Svartpeppar",
+    "category": "pantry"
+  },
+  {
+    "name": "Vitpeppar",
+    "category": "pantry"
+  },
+  {
+    "name": "Paprikapulver",
+    "category": "pantry"
+  },
+  {
+    "name": "Curry",
+    "category": "pantry"
+  },
+  {
+    "name": "Spiskummin",
+    "category": "pantry"
+  },
+  {
+    "name": "Kanel",
+    "category": "pantry"
+  },
+  {
+    "name": "Oregano",
+    "category": "pantry"
+  },
+  {
+    "name": "Timjan",
+    "category": "pantry"
+  },
+  {
+    "name": "Tacokrydda",
+    "category": "pantry"
+  },
+  {
+    "name": "Olivolja",
+    "category": "pantry"
+  },
+  {
+    "name": "Rapsolja",
+    "category": "pantry"
+  },
+  {
+    "name": "Vinäger",
+    "category": "pantry"
+  },
+  {
+    "name": "Balsamvinäger",
+    "category": "pantry"
+  },
+  {
+    "name": "Soja",
+    "category": "pantry"
+  },
+  {
+    "name": "Ketchup",
+    "category": "pantry"
+  },
+  {
+    "name": "Senap",
+    "category": "pantry"
+  },
+  {
+    "name": "Majonnäs",
+    "category": "pantry"
+  },
+  {
+    "name": "Chilisås",
+    "category": "pantry"
+  },
+  {
+    "name": "Sriracha",
+    "category": "pantry"
+  },
+  {
+    "name": "Pesto",
+    "category": "pantry"
+  },
+  {
+    "name": "Salsa",
+    "category": "pantry"
+  },
+  {
+    "name": "Tomatpuré",
+    "category": "pantry"
+  },
+  {
+    "name": "Krossade tomater",
+    "category": "pantry"
+  },
+  {
+    "name": "Passerade tomater",
+    "category": "pantry"
+  },
+  {
+    "name": "Kokosmjölk",
+    "category": "pantry"
+  },
+  {
+    "name": "Kokosgrädde",
+    "category": "pantry"
+  },
+  {
+    "name": "Grönsaksbuljong",
+    "category": "pantry"
+  },
+  {
+    "name": "Kycklingbuljong",
+    "category": "pantry"
+  },
+  {
+    "name": "Köttbuljong",
+    "category": "pantry"
+  },
+  {
+    "name": "Majs",
+    "category": "pantry"
+  },
+  {
+    "name": "Kikärtor",
+    "category": "pantry"
+  },
+  {
+    "name": "Kidneybönor",
+    "category": "pantry"
+  },
+  {
+    "name": "Svarta bönor",
+    "category": "pantry"
+  },
+  {
+    "name": "Vita bönor",
+    "category": "pantry"
+  },
+  {
+    "name": "Röda linser",
+    "category": "pantry"
+  },
+  {
+    "name": "Gröna linser",
+    "category": "pantry"
+  },
+  {
+    "name": "Tonfisk",
+    "category": "pantry"
+  },
+  {
+    "name": "Oliver",
+    "category": "pantry"
+  },
+  {
+    "name": "Kapris",
+    "category": "pantry"
+  },
+  {
+    "name": "Soltorkade tomater",
+    "category": "pantry"
+  },
+  {
+    "name": "Inlagd gurka",
+    "category": "pantry"
+  },
+  {
+    "name": "Äppelmos",
+    "category": "pantry"
+  },
+  {
+    "name": "Sylt",
+    "category": "pantry"
+  },
+  {
+    "name": "Marmelad",
+    "category": "pantry"
+  },
+  {
+    "name": "Honung",
+    "category": "pantry"
+  },
+  {
+    "name": "Sirap",
+    "category": "pantry"
+  },
+  {
+    "name": "Jordnötssmör",
+    "category": "pantry"
+  },
+  {
+    "name": "Russin",
+    "category": "pantry"
+  },
+  {
+    "name": "Torkade aprikoser",
+    "category": "pantry"
+  },
+  {
+    "name": "Solrosfrön",
+    "category": "pantry"
+  },
+  {
+    "name": "Pumpafrön",
+    "category": "pantry"
+  },
+  {
+    "name": "Chiafrön",
+    "category": "pantry"
+  },
+  {
+    "name": "Linfrön",
+    "category": "pantry"
+  },
+  {
+    "name": "Kokosflingor",
+    "category": "pantry"
+  },
+  {
+    "name": "Tofu",
+    "category": "pantry"
+  },
+  {
+    "name": "Frysta ärtor",
+    "category": "frozen"
+  },
+  {
+    "name": "Fryst broccoli",
+    "category": "frozen"
+  },
+  {
+    "name": "Fryst spenat",
+    "category": "frozen"
+  },
+  {
+    "name": "Frysta grönsaker",
+    "category": "frozen"
+  },
+  {
+    "name": "Wokgrönsaker",
+    "category": "frozen"
+  },
+  {
+    "name": "Frysta bär",
+    "category": "frozen"
+  },
+  {
+    "name": "Frysta hallon",
+    "category": "frozen"
+  },
+  {
+    "name": "Frysta blåbär",
+    "category": "frozen"
+  },
+  {
+    "name": "Fryst mango",
+    "category": "frozen"
+  },
+  {
+    "name": "Pommes frites",
+    "category": "frozen"
+  },
+  {
+    "name": "Fiskpinnar",
+    "category": "frozen"
+  },
+  {
+    "name": "Fryst pizza",
+    "category": "frozen"
+  },
+  {
+    "name": "Glass",
+    "category": "frozen"
+  },
+  {
+    "name": "Vegofärs",
+    "category": "frozen"
+  },
+  {
+    "name": "Vegetariska bullar",
+    "category": "frozen"
+  },
+  {
+    "name": "Falafel",
+    "category": "frozen"
+  },
+  {
+    "name": "Smördeg",
+    "category": "frozen"
+  },
+  {
+    "name": "Kaffe",
+    "category": "drinks"
+  },
+  {
+    "name": "Bryggkaffe",
+    "category": "drinks"
+  },
+  {
+    "name": "Kaffebönor",
+    "category": "drinks"
+  },
+  {
+    "name": "Snabbkaffe",
+    "category": "drinks"
+  },
+  {
+    "name": "Te",
+    "category": "drinks"
+  },
+  {
+    "name": "Grönt te",
+    "category": "drinks"
+  },
+  {
+    "name": "Apelsinjuice",
+    "category": "drinks"
+  },
+  {
+    "name": "Äppeljuice",
+    "category": "drinks"
+  },
+  {
+    "name": "Saft",
+    "category": "drinks"
+  },
+  {
+    "name": "Mineralvatten",
+    "category": "drinks"
+  },
+  {
+    "name": "Kolsyrat vatten",
+    "category": "drinks"
+  },
+  {
+    "name": "Läsk",
+    "category": "drinks"
+  },
+  {
+    "name": "Cola",
+    "category": "drinks"
+  },
+  {
+    "name": "Alkoholfri öl",
+    "category": "drinks"
+  },
+  {
+    "name": "Chips",
+    "category": "snacks"
+  },
+  {
+    "name": "Popcorn",
+    "category": "snacks"
+  },
+  {
+    "name": "Ostbågar",
+    "category": "snacks"
+  },
+  {
+    "name": "Tortillachips",
+    "category": "snacks"
+  },
+  {
+    "name": "Salta pinnar",
+    "category": "snacks"
+  },
+  {
+    "name": "Jordnötter",
+    "category": "snacks"
+  },
+  {
+    "name": "Cashewnötter",
+    "category": "snacks"
+  },
+  {
+    "name": "Mandlar",
+    "category": "snacks"
+  },
+  {
+    "name": "Valnötter",
+    "category": "snacks"
+  },
+  {
+    "name": "Choklad",
+    "category": "snacks"
+  },
+  {
+    "name": "Mörk choklad",
+    "category": "snacks"
+  },
+  {
+    "name": "Godis",
+    "category": "snacks"
+  },
+  {
+    "name": "Lakrits",
+    "category": "snacks"
+  },
+  {
+    "name": "Kex",
+    "category": "snacks"
+  },
+  {
+    "name": "Kakor",
+    "category": "snacks"
+  },
+  {
+    "name": "Riskakor",
+    "category": "snacks"
+  },
+  {
+    "name": "Toalettpapper",
+    "category": "household"
+  },
+  {
+    "name": "Hushållspapper",
+    "category": "household"
+  },
+  {
+    "name": "Servetter",
+    "category": "household"
+  },
+  {
+    "name": "Diskmedel",
+    "category": "household"
+  },
+  {
+    "name": "Diskmaskinstabletter",
+    "category": "household"
+  },
+  {
+    "name": "Diskborste",
+    "category": "household"
+  },
+  {
+    "name": "Disksvampar",
+    "category": "household"
+  },
+  {
+    "name": "Disktrasor",
+    "category": "household"
+  },
+  {
+    "name": "Tvättmedel",
+    "category": "household"
+  },
+  {
+    "name": "Sköljmedel",
+    "category": "household"
+  },
+  {
+    "name": "Allrengöring",
+    "category": "household"
+  },
+  {
+    "name": "Såpa",
+    "category": "household"
+  },
+  {
+    "name": "Fönsterputs",
+    "category": "household"
+  },
+  {
+    "name": "Toalettrengöring",
+    "category": "household"
+  },
+  {
+    "name": "Soppåsar",
+    "category": "household"
+  },
+  {
+    "name": "Fryspåsar",
+    "category": "household"
+  },
+  {
+    "name": "Bakplåtspapper",
+    "category": "household"
+  },
+  {
+    "name": "Aluminiumfolie",
+    "category": "household"
+  },
+  {
+    "name": "Plastfolie",
+    "category": "household"
+  },
+  {
+    "name": "Kaffefilter",
+    "category": "household"
+  },
+  {
+    "name": "Batterier",
+    "category": "household"
+  },
+  {
+    "name": "Värmeljus",
+    "category": "household"
+  },
+  {
+    "name": "Tändstickor",
+    "category": "household"
+  },
+  {
+    "name": "Hundmat",
+    "category": "household"
+  },
+  {
+    "name": "Kattmat",
+    "category": "household"
+  },
+  {
+    "name": "Kattsand",
+    "category": "household"
+  },
+  {
+    "name": "Handtvål",
+    "category": "hygiene"
+  },
+  {
+    "name": "Duschkräm",
+    "category": "hygiene"
+  },
+  {
+    "name": "Schampo",
+    "category": "hygiene"
+  },
+  {
+    "name": "Balsam",
+    "category": "hygiene"
+  },
+  {
+    "name": "Tandkräm",
+    "category": "hygiene"
+  },
+  {
+    "name": "Tandborste",
+    "category": "hygiene"
+  },
+  {
+    "name": "Tandtråd",
+    "category": "hygiene"
+  },
+  {
+    "name": "Munskölj",
+    "category": "hygiene"
+  },
+  {
+    "name": "Deodorant",
+    "category": "hygiene"
+  },
+  {
+    "name": "Hudkräm",
+    "category": "hygiene"
+  },
+  {
+    "name": "Handkräm",
+    "category": "hygiene"
+  },
+  {
+    "name": "Läppbalsam",
+    "category": "hygiene"
+  },
+  {
+    "name": "Solkräm",
+    "category": "hygiene"
+  },
+  {
+    "name": "Rakhyvlar",
+    "category": "hygiene"
+  },
+  {
+    "name": "Rakgel",
+    "category": "hygiene"
+  },
+  {
+    "name": "Bomullsrondeller",
+    "category": "hygiene"
+  },
+  {
+    "name": "Bomullspinnar",
+    "category": "hygiene"
+  },
+  {
+    "name": "Bindor",
+    "category": "hygiene"
+  },
+  {
+    "name": "Tamponger",
+    "category": "hygiene"
+  },
+  {
+    "name": "Blöjor",
+    "category": "hygiene"
+  },
+  {
+    "name": "Våtservetter",
+    "category": "hygiene"
+  }
+]

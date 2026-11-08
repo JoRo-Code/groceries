@@ -1,0 +1,249 @@
+import { initializeApp } from 'firebase/app';
+import {
+  getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  sendPasswordResetEmail, signOut as firebaseSignOut, connectAuthEmulator,
+  GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+} from 'firebase/auth';
+import {
+  initializeFirestore, memoryLocalCache, connectFirestoreEmulator, collection, doc,
+  getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField,
+} from 'firebase/firestore';
+
+export const categoryIDs = ['produce', 'dairy', 'meat', 'fish', 'bakery', 'pantry', 'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'];
+export const normalizeName = value => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('sv-SE').trim().replace(/\s+/gu, ' ');
+export async function productID(name) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalizeName(name)));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+export function validateGrocery({ name, quantity = '', category = 'other' }) {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed || [...trimmed].length > 120) throw new Error('Ange ett varunamn med högst 120 tecken.');
+  if (typeof quantity !== 'string' || [...quantity].length > 80) throw new Error('Mängden får vara högst 80 tecken.');
+  if (!categoryIDs.includes(category)) throw new Error('Välj en giltig kategori.');
+  return { name: trimmed, quantity: quantity.trim(), category };
+}
+export function validateInviteToken(token) {
+  if (typeof token !== 'string' || !/^[a-f0-9-]{72}$/.test(token)) throw new Error('Inbjudningslänken är inte giltig.');
+  return token;
+}
+const displayName = name => {
+  const value = String(name ?? '').trim();
+  if (!value || [...value].length > 80) throw new Error('Ange ett namn med högst 80 tecken.');
+  return value;
+};
+
+/** One factory also allows isolated clients in emulator acceptance tests. No admin credentials. */
+export function createBackend(config, { appName, emulators = false, inviteOrigin } = {}) {
+  if (emulators) config = { ...config, projectId: 'demo-handla', apiKey: 'demo-api-key', appId: '1:1234567890:web:demo' };
+  const app = initializeApp(config, appName);
+  const auth = getAuth(app);
+  auth.languageCode = 'sv';
+  // Keep offline edits in this tab; do not leave shared household data on a public computer's disk.
+  const db = initializeFirestore(app, { localCache: memoryLocalCache() });
+  if (emulators) {
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    connectFirestoreEmulator(db, '127.0.0.1', 8185);
+  }
+  const origin = inviteOrigin || (emulators && typeof location !== 'undefined' ? location.origin : `https://${config.projectId}.web.app`);
+  let pendingWrites = 0;
+  const queued = operation => {
+    pendingWrites += 1;
+    return Promise.resolve(operation).finally(() => { pendingWrites -= 1; });
+  };
+  const uid = () => {
+    if (!auth.currentUser) throw new Error('Logga in först.');
+    return auth.currentUser.uid;
+  };
+  const workspace = id => doc(db, 'workspaces', id);
+  const list = (w, l) => doc(db, 'workspaces', w, 'lists', l);
+  const item = (w, l, i) => doc(db, 'workspaces', w, 'lists', l, 'items', i);
+  const metadata = snapshot => ({ fromCache: snapshot.metadata.fromCache, hasPendingWrites: snapshot.metadata.hasPendingWrites });
+  const watchDoc = (ref, callback, error) => onSnapshot(ref, { includeMetadataChanges: true }, snapshot => {
+    // Missing cache data is not proof of a new account/workspace.
+    if (!snapshot.exists() && snapshot.metadata.fromCache) return;
+    callback(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null, metadata(snapshot));
+  }, error);
+  const watchCollection = (ref, callback, error) => onSnapshot(ref, { includeMetadataChanges: true }, snapshot => {
+    callback(snapshot.docs.map(d => ({ id: d.id, ...d.data() })), metadata(snapshot));
+  }, error);
+
+  const providerLogin = async provider => {
+    try { return await signInWithPopup(auth, provider); }
+    catch (error) {
+      if (error.code === 'auth/popup-blocked') {
+        // A same-domain auth handler avoids Safari third-party-storage restrictions.
+        if (emulators || (typeof location !== 'undefined' && location.hostname === config.authDomain)) {
+          return signInWithRedirect(auth, provider);
+        }
+        const blocked = new Error('Tillåt popupfönster i webbläsaren och försök igen.');
+        blocked.code = error.code;
+        throw blocked;
+      }
+      throw error;
+    }
+  };
+  return {
+    app, auth, db,
+    signInWithGoogle: () => {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      return providerLogin(provider);
+    },
+    signInWithApple: () => {
+      const provider = new OAuthProvider('apple.com');
+      provider.addScope('email'); provider.addScope('name');
+      provider.setCustomParameters({ locale: 'sv_SE' });
+      return providerLogin(provider);
+    },
+    completeRedirect: () => getRedirectResult(auth),
+    onAuth: callback => onAuthStateChanged(auth, callback),
+    signUp: (email, password) => createUserWithEmailAndPassword(auth, email.trim(), password),
+    signIn: (email, password) => signInWithEmailAndPassword(auth, email.trim(), password),
+    resetPassword: email => sendPasswordResetEmail(auth, email.trim()),
+    signOut: () => {
+      if (pendingWrites) return Promise.reject(new Error('Ändringar väntar på synkning. Anslut till internet innan du loggar ut.'));
+      return firebaseSignOut(auth);
+    },
+    watchProfile: (userID, callback, error) => watchDoc(doc(db, 'users', userID), (profile, meta) => {
+      // Membership is granted atomically with this profile. Do not start protected
+      // household listeners from a local profile before the server accepts the batch.
+      if (!meta.hasPendingWrites) callback(profile, meta);
+    }, error),
+    watchWorkspace: (id, callback, error) => watchDoc(workspace(id), callback, error),
+    watchLists: (id, callback, error) => watchCollection(collection(workspace(id), 'lists'), callback, error),
+    watchProducts: (id, callback, error) => {
+      let generation = 0, active = true;
+      const stop = watchCollection(collection(workspace(id), 'products'), async (products, meta) => {
+        const current = ++generation;
+        try {
+          const enriched = await Promise.all(products.map(async product => ({ ...product, canonical: typeof product.name === 'string' && product.id === await productID(product.name) })));
+          if (active && current === generation) callback(enriched, meta);
+        } catch (failure) { if (active && current === generation) error?.(failure); }
+      }, error);
+      return () => { active = false; generation += 1; stop(); };
+    },
+    watchMembers: (id, callback, error) => watchCollection(collection(workspace(id), 'members'), callback, error),
+    watchItems: (w, l, callback, error) => watchCollection(collection(list(w, l), 'items'), callback, error),
+    async createWorkspace(name) {
+      name = displayName(name);
+      const userID = uid(), profile = doc(db, 'users', userID);
+      if ((await getDocFromServer(profile)).exists()) throw new Error('Du tillhör redan ett hushåll.');
+      const ref = doc(collection(db, 'workspaces')), batch = writeBatch(db);
+      batch.set(ref, { name, ownerID: userID });
+      batch.set(doc(ref, 'members', userID), { role: 'owner' });
+      batch.set(profile, { workspaceID: ref.id });
+      batch.set(doc(collection(ref, 'lists')), { name: 'Veckohandling' });
+      await queued(batch.commit());
+      return ref.id;
+    },
+    async getInvite(token) {
+      validateInviteToken(token); uid();
+      const snapshot = await getDocFromServer(doc(db, 'invites', token));
+      if (!snapshot.exists()) throw new Error('Inbjudan har gått ut eller återkallats.');
+      return { id: snapshot.id, token: snapshot.id, ...snapshot.data() };
+    },
+    async joinWorkspace(token) {
+      validateInviteToken(token);
+      const userID = uid(), profile = doc(db, 'users', userID);
+      const invitation = await this.getInvite(token);
+      const current = await getDocFromServer(profile);
+      if (current.exists()) {
+        if (current.data().workspaceID === invitation.workspaceID) return invitation.workspaceID;
+        throw new Error('Du tillhör redan ett annat hushåll. Byte stöds inte ännu.');
+      }
+      const batch = writeBatch(db);
+      batch.set(doc(workspace(invitation.workspaceID), 'members', userID), { role: 'member', inviteToken: token });
+      batch.set(profile, { workspaceID: invitation.workspaceID });
+      await queued(batch.commit());
+      return invitation.workspaceID;
+    },
+    async createInvite(workspaceID) {
+      const ref = workspace(workspaceID), snapshot = await getDocFromServer(ref);
+      if (snapshot.data()?.ownerID !== uid()) throw new Error('Endast hushållets ägare kan bjuda in.');
+      const token = crypto.randomUUID() + crypto.randomUUID(), batch = writeBatch(db);
+      const old = snapshot.data().inviteToken;
+      if (old) batch.delete(doc(db, 'invites', old));
+      batch.set(doc(db, 'invites', token), { workspaceID, name: snapshot.data().name, expiresAt: Timestamp.fromMillis(Date.now() + 7 * 86400000 - 60000) });
+      batch.update(ref, { inviteToken: token });
+      await queued(batch.commit());
+      return `${origin}/join/${token}`;
+    },
+    async revokeInvite(workspaceID) {
+      const ref = workspace(workspaceID), snapshot = await getDocFromServer(ref);
+      if (snapshot.data()?.ownerID !== uid()) throw new Error('Endast hushållets ägare kan återkalla inbjudan.');
+      const batch = writeBatch(db);
+      if (snapshot.data().inviteToken) batch.delete(doc(db, 'invites', snapshot.data().inviteToken));
+      batch.update(ref, { inviteToken: deleteField() });
+      return queued(batch.commit());
+    },
+    addList(workspaceID, name) {
+      uid(); name = displayName(name);
+      const ref = doc(collection(workspace(workspaceID), 'lists'));
+      return queued(setDoc(ref, { name })).then(() => ref.id);
+    },
+    async addItem(workspaceID, listID, data) {
+      uid(); const values = validateGrocery(data), key = await productID(values.name);
+      const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
+      batch.set(ref, { ...values, checked: false });
+      batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
+      await queued(batch.commit()); return ref.id;
+    },
+    async updateItem(workspaceID, listID, itemID, data) {
+      uid(); const values = validateGrocery(data), key = await productID(values.name), batch = writeBatch(db);
+      // Never overwrite checked: another shopper may have changed it while this editor was open.
+      batch.update(item(workspaceID, listID, itemID), values);
+      batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
+      return queued(batch.commit());
+    },
+    toggleItem(workspaceID, listID, itemID, checked) {
+      uid(); if (typeof checked !== 'boolean') throw new Error('Ogiltig avbockning.');
+      return queued(updateDoc(item(workspaceID, listID, itemID), { checked }));
+    },
+    deleteItem(workspaceID, listID, itemID) {
+      uid(); return queued(deleteDoc(item(workspaceID, listID, itemID)));
+    },
+  };
+}
+
+const env = import.meta.env || {};
+let config;
+try { config = JSON.parse(env.VITE_FIREBASE_CONFIG || '{}'); } catch { config = {}; }
+export const configured = Boolean(config.apiKey && config.projectId && config.appId);
+const backend = configured ? createBackend(config, { emulators: env.VITE_USE_EMULATORS === 'true' }) : null;
+const call = name => (...args) => {
+  if (!backend) throw new Error('Firebase-konfiguration saknas.');
+  return backend[name](...args);
+};
+export const onAuth = call('onAuth');
+export const signUp = call('signUp');
+export const signIn = call('signIn');
+export const resetPassword = call('resetPassword');
+export const signOut = call('signOut');
+export const watchProfile = call('watchProfile');
+export const watchWorkspace = call('watchWorkspace');
+export const watchLists = call('watchLists');
+export const watchProducts = call('watchProducts');
+export const watchMembers = call('watchMembers');
+export const watchItems = call('watchItems');
+export const createWorkspace = call('createWorkspace');
+export const getInvite = call('getInvite');
+export const joinWorkspace = call('joinWorkspace');
+export const createInvite = call('createInvite');
+export const revokeInvite = call('revokeInvite');
+export const addList = call('addList');
+export const addItem = call('addItem');
+export const updateItem = call('updateItem');
+export const toggleItem = call('toggleItem');
+export const deleteItem = call('deleteItem');
+
+export const googleSignInAvailable = env.VITE_USE_EMULATORS === 'true' || env.VITE_GOOGLE_SIGN_IN === 'true';
+export const appleSignInAvailable = env.VITE_APPLE_SIGN_IN === 'true';
+export const signInWithGoogle = (...args) => {
+  if (!googleSignInAvailable) return Promise.reject(new Error('Google-inloggning är inte aktiverad ännu.'));
+  return call('signInWithGoogle')(...args);
+};
+export const signInWithApple = (...args) => {
+  if (!appleSignInAvailable) return Promise.reject(new Error('Apple-inloggning är inte aktiverad ännu.'));
+  return call('signInWithApple')(...args);
+};
+export const completeRedirect = call('completeRedirect');
