@@ -2,9 +2,9 @@
 
 Gemensamma inköpslistor för webben och iPhone, med Firebase Authentication, Firestore och Firebase Hosting. Webbappen är publicerad på [groceries-ros.web.app](https://groceries-ros.web.app). Arbetsnamnet är Handla. Ett workspace kallas **hushåll** i gränssnittet.
 
-Webbappen finns i [`web/`](web/README.md) och använder samma hushåll, listor och Firebase-databas. Den kan användas direkt i webbläsaren och läggas på hemskärmen. Native-appen kräver fortfarande ett riktigt iOS bundle ID, Apple-signering och Firebase-konfigurationsfil.
+Webbappen finns i [`web/`](web/README.md) och använder samma hushåll, listor och Firebase-databas. Den kan användas direkt i webbläsaren och läggas på hemskärmen. Native-appen är konfigurerad för `se.groceriesros.handla` och Apple-team `P92GB9QRA5`. Firebase-konfigurationen finns lokalt och är Git-ignorerad; fysisk iPhone-signering återstår. Se [native-inställningar](docs/native-setup.md).
 
-E-postinloggning är aktiverad i projektet. Google- och Apple-flöden finns i koden men kräver leverantörskonfiguration innan knapparna aktiveras. Se [Apple-inställningarna](firebase/APPLE_SETUP.md).
+E-post, Google och Apple är aktiverade i Firebase och webbappen. Google- och Apple-knapparna har verifierats öppna respektive leverantörs riktiga inloggningssida. Inga personliga kontouppgifter fylldes i under kontrollen. Se [Apple-inställningarna](firebase/APPLE_SETUP.md).
 
 ## Första versionen
 
@@ -21,11 +21,11 @@ E-postinloggning är aktiverad i projektet. Google- och Apple-flöden finns i ko
 ## Lokal start
 
 1. Öppna `Handla.xcodeproj` i Xcode. Projektet kan återskapas med `xcodegen generate` från `project.yml`.
-2. Ändra `PRODUCT_BUNDLE_IDENTIFIER` (`se.example.handla`) i `project.yml`. Ange ditt team som `DEVELOPMENT_TEAM` under `settings.base` eller välj det i Xcode efter generering. Aktivera Sign in with Apple och Associated Domains för samma App ID i Apple Developer.
-3. Skapa/välj Firebase-projekt på Spark, registrera iOS-appen med samma bundle ID och lägg `GoogleService-Info.plist` i `Handla/`. Kör `xcodegen generate` igen så att filen kommer med som resurs.
-4. Aktivera e-post/lösenord och Apple som inloggningsmetoder i Firebase Authentication. Samma e-postkonto används i webbappen och iOS-appen; lösenord kan återställas från inloggningsvyn. Skapa Firestore-databas i lämplig EU-region. Aktivera inte öppna testregler.
-5. Ändra `INVITE_HOST` i `project.yml` till projektets faktiska Hosting-domän, t.ex. `mitt-projekt.web.app`. Generera projektet igen.
-6. Ändra `YOUR_TEAM_ID.se.example.handla` i `web/public/.well-known/apple-app-site-association` till appens verkliga application identifier (App ID prefix och bundle ID).
+2. `project.yml` innehåller appens faktiska bundle-ID `se.groceriesros.handla` och team `P92GB9QRA5`. Sign in with Apple och Associated Domains är aktiverade i projektet. Vid generering validerar ett post-generation-script XcodeGen-formatet för dessa capabilities.
+3. Firebase-projektet är `groceries-ros` och iOS-registreringen finns redan. I ett nytt checkout: hämta dess `GoogleService-Info.plist` till `Handla/` enligt [native-guiden](docs/native-setup.md), och kör `xcodegen generate` igen. Filen ska inte committas.
+4. Projektets Firestore-databas finns i EU-regionen `eur3` på gratisnivån. Samma e-postkonto kan användas i webbappen och iOS-appen. För sociala leverantörer och deras verifieringsstatus, se [Apple-guiden](firebase/APPLE_SETUP.md) och [providerkontrollen](qa/browser/provider-setup-status.md).
+5. `INVITE_HOST` är `groceries-ros.web.app`. Appens Associated Domains-entitlement använder samma värde.
+6. `web/public/.well-known/apple-app-site-association` innehåller `P92GB9QRA5.se.groceriesros.handla`. Den publiceras tillsammans med webbappen.
 7. Bygg webbappen med `cd web && npm ci && npm run build`. Från `firebase/`: kör `npm ci`, `npx firebase login`, `node scripts/stage-web.cjs` och `npx firebase deploy --project groceries-ros --only firestore:rules,hosting`. Konfigurationen publicerar den byggda kopian i `firebase/hosting-dist/`.
 8. Kör appen på en signerad iPhone. Testa delning mellan två olika Apple-konton.
 
