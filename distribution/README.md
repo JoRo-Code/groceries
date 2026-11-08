@@ -8,9 +8,9 @@ The export options use automatic signing and upload to App Store Connect. Upload
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 xcodebuild -project Handla.xcodeproj -scheme Handla -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath .build \
-  -archivePath /tmp/Handla-TestFlight-build2.xcarchive \
+  -archivePath /tmp/Handla-TestFlight-build4.xcarchive \
   -allowProvisioningUpdates archive
-xcodebuild -exportArchive -archivePath /tmp/Handla-TestFlight-build2.xcarchive \
+xcodebuild -exportArchive -archivePath /tmp/Handla-TestFlight-build4.xcarchive \
   -exportPath /tmp/Handla-TestFlight-export \
   -exportOptionsPlist distribution/ExportOptions-TestFlight.plist \
   -allowProvisioningUpdates
@@ -31,3 +31,5 @@ Version **1.0 (2)** uploaded and processed on 2026-11-08. Internal group **Inter
 Encryption questionnaire: standard algorithms in addition to the Apple OS (Firebase gRPC/BoringSSL TLS); France distribution **No**, reflecting the current internal Swedish beta scope. Reassess before changing distribution territory or encryption. No blanket `ITSAppUsesNonExemptEncryption` declaration was added. [Apple encryption documentation guidance](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption).
 
 Upload reported nonfatal symbol warnings for Xcode-generated wrappers around Firebase static libraries. The app’s own dSYM matches its binary, and build 2 was accepted for internal testing. See the [verified symbol diagnosis](../qa/native-symbols.md).
+
+Build **1.0 (4)** adds adaptive colors and a local System/Ljust/Mörkt preference. Verified Testing in the same internal group alongside2; see [build4 evidence](../qa/testflight-build4.md). Export options preserve the explicitly chosen build number; do not reuse an older archive for a new build.
