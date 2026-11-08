@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function workspacePath(w) { return /databases/$(database)/documents/workspaces/$(w); }
+    function memberPath(w) { return /databases/$(database)/documents/workspaces/$(w)/members/$(request.auth.uid); }
+    function member(w) { return signedIn() && exists(memberPath(w)); }
+    function owner(w) { return signedIn() && get(workspacePath(w)).data.ownerID == request.auth.uid; }
+    function text(value, max) { return value is string && value.size() > 0 && value.size() <= max; }
+    // Old documents have no category; explicit values must use stable catalogue IDs.
+    function validCategory(data) {
+      return !('category' in data) || (data.category is string && data.category in [
+        'produce', 'dairy', 'meat', 'fish', 'bakery', 'pantry',
+        'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'
+      ]);
+    }
+    function unassigned() { return !exists(userPath()); }
+    function validInvite(w, token) {
+      let invite = get(/databases/$(database)/documents/invites/$(token));
+      return invite.data.workspaceID == w && invite.data.expiresAt > request.time
+        && get(workspacePath(w)).data.inviteToken == token;
+    }
+    match /users/{uid} {
+      allow get: if signedIn() && uid == request.auth.uid;
+      allow create: if signedIn() && uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['workspaceID'])
+        && request.resource.data.workspaceID is string
+        && existsAfter(memberPath(request.resource.data.workspaceID));
+    }
+    match /workspaces/{w} {
+      allow get: if member(w);
+      allow create: if signedIn() && unassigned()
+        && request.resource.data.keys().hasOnly(['name', 'ownerID'])
+        && text(request.resource.data.name, 80)
+        && request.resource.data.ownerID == request.auth.uid
+        && getAfter(userPath()).data.workspaceID == w
+        && getAfter(memberPath(w)).data.role == 'owner';
+      allow update: if owner(w)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteToken']);
+      match /members/{uid} {
+        allow read: if member(w);
+        allow create: if signedIn() && uid == request.auth.uid && unassigned()
+          && getAfter(userPath()).data.workspaceID == w
+          && ((request.resource.data.keys().hasOnly(['role'])
+               && request.resource.data.role == 'owner'
+               && getAfter(workspacePath(w)).data.ownerID == request.auth.uid)
+            || (request.resource.data.keys().hasOnly(['role', 'inviteToken'])
+               && request.resource.data.role == 'member'
+               && validInvite(w, request.resource.data.inviteToken)));
+      }
+      match /lists/{list} {
+        allow read: if member(w);
+        allow create: if signedIn() && existsAfter(memberPath(w))
+          && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
+        allow update: if member(w)
+          && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
+        match /items/{item} {
+          allow read, delete: if member(w);
+          allow create, update: if member(w)
+            && exists(/databases/$(database)/documents/workspaces/$(w)/lists/$(list))
+            && request.resource.data.keys().hasOnly(['name', 'quantity', 'checked', 'category'])
+            && validCategory(request.resource.data)
+            && text(request.resource.data.name, 120)
+            && request.resource.data.quantity is string && request.resource.data.quantity.size() <= 80
+            && request.resource.data.checked is bool;
+        }
+      }
+      match /products/{product} {
+        allow read: if member(w);
+        allow create, update: if member(w) && request.resource.data.keys().hasOnly(['name', 'category'])
+          && validCategory(request.resource.data)
+          && text(request.resource.data.name, 120);
+      }
+    }
+    match /invites/{token} {
+      allow get: if signedIn() && resource.data.expiresAt > request.time
+        && get(workspacePath(resource.data.workspaceID)).data.inviteToken == token;
+      allow create: if signedIn() && owner(request.resource.data.workspaceID)
+        && token.matches('^[a-f0-9-]{72}$')
+        && request.resource.data.keys().hasOnly(['workspaceID', 'name', 'expiresAt'])
+        && request.resource.data.name == get(workspacePath(request.resource.data.workspaceID)).data.name
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd')
+        && getAfter(workspacePath(request.resource.data.workspaceID)).data.inviteToken == token;
+      allow delete: if owner(resource.data.workspaceID);
+    }
+  }
+}

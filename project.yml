@@ -1,0 +1,37 @@
+name: Handla
+options:
+  developmentLanguage: sv
+  deploymentTarget:
+    iOS: '17.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    PRODUCT_BUNDLE_IDENTIFIER: se.example.handla
+    TARGETED_DEVICE_FAMILY: '1'
+    INVITE_HOST: your-project.web.app
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.0.0
+targets:
+  Handla:
+    type: application
+    platform: iOS
+    sources: [Handla]
+    info:
+      path: Handla/Info.plist
+      properties:
+        CFBundleDisplayName: Handla
+        UILaunchScreen: {}
+        InviteHost: $(INVITE_HOST)
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    entitlements:
+      path: Handla/Handla.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
+        com.apple.developer.associated-domains: ['applinks:$(INVITE_HOST)']
+    dependencies:
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
