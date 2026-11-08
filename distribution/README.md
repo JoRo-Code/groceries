@@ -30,4 +30,4 @@ Version **1.0 (2)** uploaded and processed on 2026-11-08. Internal group **Inter
 
 Encryption questionnaire: standard algorithms in addition to the Apple OS (Firebase gRPC/BoringSSL TLS); France distribution **No**, reflecting the current internal Swedish beta scope. Reassess before changing distribution territory or encryption. No blanket `ITSAppUsesNonExemptEncryption` declaration was added. [Apple encryption documentation guidance](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption).
 
-Upload reported nonfatal missing-symbol warnings for Firebase prebuilt frameworks; build 2 was still accepted for internal testing. This limits SDK crash symbolication and is tracked separately from app installation.
+Upload reported nonfatal symbol warnings for Xcode-generated wrappers around Firebase static libraries. The app’s own dSYM matches its binary, and build 2 was accepted for internal testing. See the [verified symbol diagnosis](../qa/native-symbols.md).
