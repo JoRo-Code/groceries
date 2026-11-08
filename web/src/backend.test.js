@@ -19,7 +19,9 @@ test('two users share lists, edit without losing checkoff, remember categories, 
   const stamp=crypto.randomUUID();
   const owner=createBackend(config,{appName:`owner-${stamp}`,emulators:true,inviteOrigin:'http://localhost:5173'});
   const guest=createBackend(config,{appName:`guest-${stamp}`,emulators:true,inviteOrigin:'http://localhost:5173'});
+  const outsider=createBackend(config,{appName:`outsider-${stamp}`,emulators:true});
   try {
+    await outsider.signUp(`outsider-${stamp}@example.test`,'TestPassword123!');
     await owner.signUp(`owner-${stamp}@example.test`,'TestPassword123!');
     await guest.signUp(`guest-${stamp}@example.test`,'TestPassword123!');
     const profileEvents = [];
@@ -38,6 +40,16 @@ test('two users share lists, edit without losing checkoff, remember categories, 
     assert.equal(await guest.joinWorkspace(token), workspaceID);
     assert.equal(await guest.joinWorkspace(token), workspaceID);
     const listID=await guest.addList(workspaceID,'Helg');
+    await guest.renameList(workspaceID,listID,'  Helgmat  ');
+    assert.equal((await getDoc(doc(owner.db,'workspaces',workspaceID,'lists',listID))).data().name,'Helgmat');
+    assert.throws(()=>guest.renameList(workspaceID,listID,'   '));
+    assert.throws(()=>guest.renameList(workspaceID,listID,'x'.repeat(81)));
+    await assert.rejects(outsider.renameList(workspaceID,listID,'Intrång'),error=>error.code==='permission-denied');
+    await disableNetwork(guest.db);
+    const renamePending=guest.renameList(workspaceID,listID,'Helgens mat');
+    await assert.rejects(guest.signOut(),/synkning/);
+    await enableNetwork(guest.db);await renamePending;
+    assert.equal((await getDoc(doc(owner.db,'workspaces',workspaceID,'lists',listID))).data().name,'Helgens mat');
     const itemID=await owner.addItem(workspaceID,listID,{name:'Mjölk',quantity:'2 l',category:'dairy'});
     await guest.toggleItem(workspaceID,listID,itemID,true);
     await owner.updateItem(workspaceID,listID,itemID,{name:'Mjölk',quantity:'3 l',category:'pantry'});
@@ -63,5 +75,5 @@ test('two users share lists, edit without losing checkoff, remember categories, 
     await guest.deleteItem(workspaceID,listID,itemID);
     assert.equal((await getDoc(doc(owner.db,'workspaces',workspaceID,'lists',listID,'items',itemID))).exists(),false);
     await guest.signOut();await owner.signOut();
-  } finally { await Promise.all([terminate(owner.db),terminate(guest.db)]);await Promise.all([deleteApp(owner.app),deleteApp(guest.app)]); }
+  } finally { await Promise.all([terminate(owner.db),terminate(guest.db),terminate(outsider.db)]);await Promise.all([deleteApp(owner.app),deleteApp(guest.app),deleteApp(outsider.app)]); }
 });

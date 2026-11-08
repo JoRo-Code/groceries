@@ -181,6 +181,10 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       const ref = doc(collection(workspace(workspaceID), 'lists'));
       return queued(setDoc(ref, { name })).then(() => ref.id);
     },
+    renameList(workspaceID, listID, name) {
+      uid(); name = displayName(name);
+      return queued(updateDoc(list(workspaceID, listID), { name }));
+    },
     async addItem(workspaceID, listID, data) {
       uid(); const values = validateGrocery(data), key = await productID(values.name);
       const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
@@ -231,6 +235,7 @@ export const joinWorkspace = call('joinWorkspace');
 export const createInvite = call('createInvite');
 export const revokeInvite = call('revokeInvite');
 export const addList = call('addList');
+export const renameList = call('renameList');
 export const addItem = call('addItem');
 export const updateItem = call('updateItem');
 export const toggleItem = call('toggleItem');
