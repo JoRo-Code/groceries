@@ -33,3 +33,5 @@ Encryption questionnaire: standard algorithms in addition to the Apple OS (Fireb
 Upload reported nonfatal symbol warnings for Xcode-generated wrappers around Firebase static libraries. The app’s own dSYM matches its binary, and build 2 was accepted for internal testing. See the [verified symbol diagnosis](../qa/native-symbols.md).
 
 Build **1.0 (4)** adds adaptive colors and a local System/Ljust/Mörkt preference. Verified Testing in the same internal group alongside2; see [build4 evidence](../qa/testflight-build4.md). Export options preserve the explicitly chosen build number; do not reuse an older archive for a new build.
+
+Build **1.0 (6)** is uploaded and Testing in the existing internal group. Public App Store version 1.0 with build 6 was submitted on 2026-11-08 and is **Waiting for Review**, with automatic release in Sweden after approval. See [submission evidence](../qa/app-store-submission.md) and [build 6 evidence](../qa/testflight-build6.md).

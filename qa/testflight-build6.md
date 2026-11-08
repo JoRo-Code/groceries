@@ -20,4 +20,6 @@ This explicit CLI attempt still failed at local account selection (`Failed to Us
 
 Organizer displayed **Upload completed with warnings**. Only the five previously documented Firebase static-wrapper dSYM warnings appeared; the app’s own matching dSYM is present. Log bundle `Handla_2026-11-08_15-23-01.337.xcdistributionlogs`. ASC independently shows version 1.0 build 6 uploaded at 15:25 on 2026-11-08, initially Processing. No old build 5 was uploaded.
 
-Processing/compliance, internal group association and public draft build selection remain to be verified below. Public submission remains blocked by actual operator/support/review contacts and public policy/support content; no public submission is implied by upload.
+Processing completed. Export compliance was saved with standard encryption in addition to Apple OS and no France distribution. Internal group Intern test contains its one existing tester and builds 6, 4 and 2; build 6 is Testing. No new tester or external group was added.
+
+Public version 1.0 now uses build 6 and was submitted successfully to App Review after metadata validation. Fresh reload confirms **Waiting for Review**, build 6 and automatic release after approval. See [submission evidence](app-store-submission.md).
