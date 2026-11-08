@@ -1,19 +1,42 @@
 import SwiftUI
 import FirebaseCore
+import FirebaseAuth
+import FirebaseFirestore
 
 @main
 struct HandlaApp: App {
     @StateObject private var store: Store
     @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
     init() {
-        let configured = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil
+        var configured = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--qa-deletion-emulator") {
+            let options = FirebaseOptions(googleAppID: "1:123456789:ios:abcdef0123456789", gcmSenderID: "123456789")
+            options.apiKey = "fake-emulator-key"; options.projectID = "demo-handla"
+            FirebaseApp.configure(options: options)
+            Auth.auth().useEmulator(withHost: "127.0.0.1", port: 9099)
+            let firestore = Firestore.firestore()
+            firestore.useEmulator(withHost: "127.0.0.1", port: 8185)
+            let settings = firestore.settings
+            settings.isSSLEnabled = false
+            settings.cacheSettings = MemoryCacheSettings()
+            firestore.settings = settings
+            configured = true
+        } else if configured { FirebaseApp.configure() }
+        #else
         if configured { FirebaseApp.configure() }
+        #endif
         _store = StateObject(wrappedValue: Store(configured: configured))
     }
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(store).tint(.indigo)
                 .onOpenURL { store.receive($0) }
+                .task {
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("--qa-deletion-emulator") { await NativeDeletionQA.run(store: store) }
+                    #endif
+                }
                 .background(WindowAppearance(appearance: AppAppearance(rawValue: appearance) ?? .system))
         }
     }

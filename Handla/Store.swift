@@ -49,6 +49,7 @@ final class Store: ObservableObject {
     @Published var listsPending = false
     @Published var loading = false
     @Published var busy = false
+    @Published private(set) var deletingAccount = false
     @Published var error: String?
     @Published var workspaceID: String?
     @Published var workspaceName = ""
@@ -95,7 +96,7 @@ final class Store: ObservableObject {
                 self.loading = true
                 self.profileListener = self.db.collection("users").document(user.uid).addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, error in
                     Task { @MainActor [weak self] in
-                        guard let self, self.sessionGeneration == generation else { return }
+                        guard let self, self.sessionGeneration == generation, !self.deletingAccount else { return }
                         if let error { self.loading = false; self.error = error.localizedDescription; return }
                         // An empty local cache does not prove this is a new account.
                         guard let snapshot else { return }
@@ -152,6 +153,8 @@ final class Store: ObservableObject {
         case .invalidEmail: return HandlaError.message("Kontrollera e-postadressen och försök igen.")
         case .emailAlreadyInUse: return HandlaError.message("E-postadressen har redan ett konto. Välj Logga in eller återställ lösenordet.")
         case .weakPassword: return HandlaError.message("Lösenordet uppfyller inte kraven. Välj ett starkare lösenord med minst 6 tecken.")
+        case .userMismatch: return HandlaError.message("Använd samma konto som du är inloggad med.")
+        case .requiresRecentLogin: return HandlaError.message("Bekräfta din inloggning igen och försök på nytt.")
         case .wrongPassword, .invalidCredential, .userNotFound: return HandlaError.message("Kunde inte logga in. Kontrollera e-postadress och lösenord.")
         case .networkError: return HandlaError.message("Kontrollera internetanslutningen och försök igen.")
         case .tooManyRequests: return HandlaError.message("För många försök. Vänta en stund och försök igen.")
@@ -425,5 +428,167 @@ final class Store: ObservableObject {
         invitation = nil
         loadingInviteToken = nil
         loading = false
+    }
+}
+
+struct AccountDeletionPlan {
+    let userID: String
+    let workspaceID: String?
+    let owner: Bool
+    let successorID: String?
+    let successorName: String?
+    var explanation: String {
+        guard workspaceID != nil else { return "Ditt konto och dina kontouppgifter raderas permanent." }
+        if !owner { return "Ditt konto och ditt medlemskap raderas. Hushållets gemensamma listor finns kvar för de andra medlemmarna." }
+        if let successorName { return "Ditt konto raderas och \(successorName) blir ägare. Hushållets gemensamma listor finns kvar. Tidigare inbjudningslänkar återkallas." }
+        return "Du är ensam i hushållet. Ditt konto och hela hushållet, inklusive listor, varor och inköpshistorik, raderas permanent."
+    }
+}
+
+extension Store {
+    var deletionUsesApple: Bool { Auth.auth().currentUser?.providerData.contains { $0.providerID == "apple.com" } == true }
+    var deletionUsesPassword: Bool { Auth.auth().currentUser?.providerData.contains { $0.providerID == "password" } == true }
+    var accountEmail: String { Auth.auth().currentUser?.email ?? "" }
+
+    func prepareAccountDeletion() async throws -> AccountDeletionPlan {
+        let userID = try uid
+        let profile = try await db.collection("users").document(userID).getDocument(source: .server)
+        guard let workspaceID = profile.get("workspaceID") as? String else {
+            return AccountDeletionPlan(userID: userID, workspaceID: nil, owner: false, successorID: nil, successorName: nil)
+        }
+        let workspace = db.collection("workspaces").document(workspaceID)
+        let document = try await workspace.getDocument(source: .server)
+        let isOwner = document.get("ownerID") as? String == userID
+        let members = try await workspace.collection("members").getDocuments(source: .server)
+        let successor = members.documents.filter { $0.documentID != userID }.sorted { $0.documentID < $1.documentID }.first
+        return AccountDeletionPlan(userID: userID, workspaceID: workspaceID, owner: isOwner,
+            successorID: isOwner ? successor?.documentID : nil,
+            successorName: isOwner ? successor.map { ($0.get("displayName") as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Medlem utan namn" } : nil)
+    }
+
+    func deleteAccount(plan: AccountDeletionPlan, password: String = "", appleAuthorization: ASAuthorization? = nil) async throws {
+        guard let user = Auth.auth().currentUser, user.uid == plan.userID else { throw HandlaError.message("Kontot har ändrats. Öppna raderingen igen.") }
+        guard !busy else { throw HandlaError.message("Vänta tills den pågående åtgärden är klar.") }
+        busy = true; deletingAccount = true; error = nil
+        defer { busy = false; deletingAccount = false; error = nil }
+        do {
+            // A server read fails offline before a destructive operation starts; drain existing writes first.
+            _ = try await db.collection("users").document(user.uid).getDocument(source: .server)
+            try await db.waitForPendingWrites()
+            if deletionUsesApple {
+                guard let apple = appleAuthorization?.credential as? ASAuthorizationAppleIDCredential,
+                      let tokenData = apple.identityToken, let token = String(data: tokenData, encoding: .utf8),
+                      let codeData = apple.authorizationCode, let code = String(data: codeData, encoding: .utf8) else {
+                    throw HandlaError.message("Bekräfta ditt Apple-konto för att radera kontot.")
+                }
+                let credential = OAuthProvider.appleCredential(withIDToken: token, rawNonce: nonce, fullName: apple.fullName)
+                _ = try await user.reauthenticate(with: credential)
+                try await Auth.auth().revokeToken(withAuthorizationCode: code)
+            } else if deletionUsesPassword, let email = user.email {
+                guard !password.isEmpty else { throw HandlaError.message("Ange ditt lösenord för att bekräfta raderingen.") }
+                _ = try await user.reauthenticate(with: EmailAuthProvider.credential(withEmail: email, password: password))
+            } else {
+                throw HandlaError.message("Kontots inloggningsmetod stöds inte av denna appversion. Raderingen har inte påbörjats.")
+            }
+            _ = try await user.getIDTokenResult(forcingRefresh: true)
+            try await removeAccountData(plan)
+            // Auth is last: if it fails, the signed-in user can retry from onboarding without orphaned data.
+            resetWorkspace()
+            try await user.delete()
+            UserDefaults.standard.removeObject(forKey: "pendingInvite")
+            invitation = nil
+        } catch {
+            if let failure = error as? HandlaError { throw failure }
+            if (error as NSError).domain == AuthErrorDomain { throw emailAuthenticationError(error) }
+            throw HandlaError.message("Raderingen kunde inte slutföras. Kontrollera internetanslutningen och försök igen. Om raderingen redan har börjat fortsätter nästa försök där det avbröts.")
+        }
+    }
+
+    private func removeAccountData(_ plan: AccountDeletionPlan) async throws {
+        let userID = try uid
+        guard userID == plan.userID else { throw HandlaError.message("Kontot har ändrats. Öppna raderingen igen.") }
+        let profile = db.collection("users").document(userID)
+        guard let workspaceID = plan.workspaceID else {
+            let current = try await profile.getDocument(source: .server)
+            guard current.get("workspaceID") == nil else { throw HandlaError.message("Ditt hushåll har ändrats. Öppna raderingen igen.") }
+            if current.exists { try await profile.delete() }
+            return
+        }
+        let workspace = db.collection("workspaces").document(workspaceID)
+        let ownMember = workspace.collection("members").document(userID)
+        if !plan.owner {
+            _ = try await db.runTransaction { transaction, errorPointer in
+                do {
+                    let current = try transaction.getDocument(workspace)
+                    let currentProfile = try transaction.getDocument(profile)
+                    guard current.get("ownerID") as? String != userID,
+                          currentProfile.get("workspaceID") as? String == workspaceID else {
+                        throw HandlaError.message("Ditt hushåll eller din roll har ändrats. Öppna raderingen igen.")
+                    }
+                    transaction.deleteDocument(ownMember); transaction.deleteDocument(profile)
+                    return true
+                } catch { errorPointer?.pointee = error as NSError; return nil }
+            }
+            return
+        }
+        _ = try await db.runTransaction { transaction, errorPointer in
+            do {
+                let current = try transaction.getDocument(workspace)
+                let currentProfile = try transaction.getDocument(profile)
+                guard current.get("ownerID") as? String == userID,
+                      currentProfile.get("workspaceID") as? String == workspaceID else {
+                    throw HandlaError.message("Hushållet har ändrats. Öppna raderingen igen.")
+                }
+                if let token = current.get("inviteToken") as? String { transaction.deleteDocument(self.db.collection("invites").document(token)) }
+                transaction.updateData(["deletingBy": userID, "inviteToken": FieldValue.delete()], forDocument: workspace)
+                return true
+            } catch { errorPointer?.pointee = error as NSError; return nil }
+        }
+        // The lock blocks joins and normal writes, so this server query is an authoritative stable roster.
+        let members = try await workspace.collection("members").getDocuments(source: .server)
+        let successor = members.documents.filter { $0.documentID != userID }.sorted { $0.documentID < $1.documentID }.first
+        guard successor?.documentID == plan.successorID else {
+            try await workspace.updateData(["deletingBy": FieldValue.delete()])
+            throw HandlaError.message("Medlemmarna har ändrats. Öppna raderingen igen för att bekräfta den nya ägaren. Den tidigare inbjudningslänken har återkallats.")
+        }
+        if let successor {
+            _ = try await db.runTransaction { transaction, errorPointer in
+                do {
+                    let current = try transaction.getDocument(workspace)
+                    let recipient = try transaction.getDocument(successor.reference)
+                    _ = try transaction.getDocument(profile)
+                    guard current.get("deletingBy") as? String == userID, recipient.exists else {
+                        throw HandlaError.message("Hushållet har ändrats. Öppna raderingen igen.")
+                    }
+                    transaction.updateData(["ownerID": successor.documentID, "deletingBy": FieldValue.delete(), "inviteToken": FieldValue.delete()], forDocument: workspace)
+                    transaction.updateData(["role": "owner"], forDocument: successor.reference)
+                    transaction.deleteDocument(ownMember); transaction.deleteDocument(profile)
+                    return true
+                } catch { errorPointer?.pointee = error as NSError; return nil }
+            }
+        } else {
+            // Delete bounded batches; keep workspace/self membership until child cleanup is acknowledged.
+            while true {
+                let lists = try await workspace.collection("lists").limit(to: 100).getDocuments(source: .server)
+                if lists.isEmpty { break }
+                for list in lists.documents {
+                    try await purgeCollection(list.reference.collection("items"))
+                    try await list.reference.delete()
+                }
+            }
+            try await purgeCollection(workspace.collection("products"))
+            let batch = db.batch()
+            batch.deleteDocument(ownMember); batch.deleteDocument(profile); batch.deleteDocument(workspace)
+            try await batch.commit()
+        }
+    }
+    private func purgeCollection(_ collection: CollectionReference) async throws {
+        while true {
+            let page = try await collection.limit(to: 200).getDocuments(source: .server)
+            if page.isEmpty { return }
+            let batch = db.batch()
+            for document in page.documents { batch.deleteDocument(document.reference) }
+            try await batch.commit()
+        }
     }
 }

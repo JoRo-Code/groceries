@@ -6,6 +6,7 @@ struct RootView: View {
     @EnvironmentObject private var store: Store
     @State private var name = ""
     @State private var link = ""
+    @State private var deletingAccount = false
     @Environment(\.scenePhase) private var scenePhase
     private var shoppingPreview: Bool {
         #if DEBUG
@@ -42,12 +43,14 @@ struct RootView: View {
                                 else { store.error = "Ange en giltig inbjudningslänk." }
                             }.disabled(link.isEmpty)
                         }
+                        Section { AccountLinks(); Button("Radera konto", role: .destructive) { deletingAccount = true }.disabled(store.busy) }
                         Button("Logga ut") { do { try store.signOut() } catch { store.error = error.localizedDescription } }.disabled(store.busy)
                     }.navigationTitle("Handla")
                 } else { ListsView() }
             }
         }
         .id(store.sessionID)
+        .sheet(isPresented: $deletingAccount) { AccountDeletionView() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await store.loadPendingInvite() } }
         }
@@ -62,7 +65,7 @@ struct RootView: View {
                 if let error = store.error { Text(error).foregroundStyle(.red).font(.caption) }
             }.padding(32).presentationDetents([.medium, .large]).interactiveDismissDisabled(store.busy)
         }
-        .alert("Kunde inte slutföra", isPresented: Binding(get: { store.error != nil && store.invitation == nil }, set: { if !$0 { store.error = nil } })) {
+        .alert("Kunde inte slutföra", isPresented: Binding(get: { store.error != nil && store.invitation == nil && !store.deletingAccount }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
     }
@@ -115,6 +118,7 @@ struct SignInView: View {
                 SignInWithAppleButton(.continue, onRequest: store.prepareApple, onCompletion: store.finishApple)
                     .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                     .frame(height: 50).clipShape(RoundedRectangle(cornerRadius: 12)).disabled(store.busy)
+            AccountLinks().font(.footnote)
             }.padding(28)
         }
         .scrollDismissesKeyboard(.interactively)
@@ -175,6 +179,7 @@ struct ListsView: View {
 }
 
 struct WorkspaceView: View {
+    @State private var deletingAccount = false
     @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
     var preview = false
     private var sampleMembers: [HouseholdMember] {
@@ -213,7 +218,7 @@ struct WorkspaceView: View {
                         }.padding(.vertical, 3)
                     }
                     if roster.isEmpty { Text("Hämtar medlemmar…").foregroundStyle(.secondary) }
-                    if preview { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
+                    if preview && showPreviewWatermark { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
                 }
                 if store.owner && !preview {
                     Section {
@@ -227,8 +232,11 @@ struct WorkspaceView: View {
                     }
                 }
                 if let error = store.error { Section { Text(error).foregroundStyle(.red) } }
+                Section("Om Handla") { AccountLinks() }
+                if !preview { Section("Konto") { Button("Radera konto", role: .destructive) { deletingAccount = true }.disabled(store.busy) } }
                 if !preview { Button("Logga ut") { do { try store.signOut(); dismiss() } catch { store.error = error.localizedDescription } }.disabled(store.busy) }
-            }.navigationTitle("Ert hushåll").toolbar { Button("Klart") { dismiss() } }
+            }.navigationTitle("Ert hushåll").toolbar { Button("Klart") { dismiss() }.disabled(store.deletingAccount) }
+            .sheet(isPresented: $deletingAccount) { AccountDeletionView() }
         }
     }
 }
@@ -508,7 +516,7 @@ struct ItemsView: View {
                             Text(observation.pending ? "Väntar på synkning…" : "Visar sparad lista")
                                 .font(.caption).foregroundStyle(.secondary).padding(10)
                         }
-                        if preview {
+                        if preview && showPreviewWatermark {
                             Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(7)
                         }
                     }.frame(minHeight: geometry.size.height, alignment: .top)
@@ -766,7 +774,7 @@ private struct AddGroceriesView: View {
                         }
                     }
                     if suggestions.isEmpty { Text("Tryck på Lägg till vara för att lägga till \(query).").font(.subheadline).foregroundStyle(.secondary) }
-                    if preview { Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(.top, 16) }
+                    if preview && showPreviewWatermark { Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(.top, 16) }
                     Color.clear.frame(maxWidth: .infinity).frame(minHeight: 220).contentShape(Rectangle())
                         .onTapGesture { focused = false; dismiss() }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 23).padding(.top, 3)
@@ -837,7 +845,7 @@ private struct GroceryEditor: View {
             Form {
                 Section("Vara") { TextField("Namn", text: $name); HStack { Text("Mängd"); TextField("Till exempel 2 l", text: $quantity).multilineTextAlignment(.trailing) } }
                 Section("Kategori") { Picker("Kategori", selection: $category) { ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) } } }
-                if preview { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
+                if preview && showPreviewWatermark { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
                 Section("Datum") {
                     LabeledContent("Tillagd", value: createdAt?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
                     LabeledContent("Senast avbockad", value: checkedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
@@ -902,4 +910,12 @@ private enum ShoppingExamples {
         "home": [Grocery(id: "detergent", name: "Tvättmedel", quantity: "1 pkt", checked: false, category: .household), Grocery(id: "toothpaste", name: "Tandkräm", quantity: "1 st", checked: false, category: .hygiene)],
         "cabin": [Grocery(id: "paper", name: "Toalettpapper", quantity: "1 pkt", checked: false, category: .household), Grocery(id: "soap", name: "Diskmedel", quantity: "1 st", checked: false, category: .household)]
     ]
+}
+
+private var showPreviewWatermark: Bool {
+    #if DEBUG
+    !ProcessInfo.processInfo.arguments.contains("--app-store-screenshots")
+    #else
+    true
+    #endif
 }
