@@ -64,6 +64,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
   const workspace = id => doc(db, 'workspaces', id);
   const list = (w, l) => doc(db, 'workspaces', w, 'lists', l);
   const item = (w, l, i) => doc(db, 'workspaces', w, 'lists', l, 'items', i);
+  const auditFields = () => ({updatedByUID:uid(),updatedAt:serverTimestamp()});
   const actorFields = () => pushDataEnabled ? {lastActorUID:uid(),lastActionAt:serverTimestamp()} : {};
   const purgeDocuments = async source => {for(;;){const rows=await getDocsFromServer(query(source,limit(200)));if(rows.empty)return;const batch=writeBatch(db);rows.docs.forEach(row=>batch.delete(row.ref));await batch.commit()}};
   const metadata = snapshot => ({ fromCache: snapshot.metadata.fromCache, hasPendingWrites: snapshot.metadata.hasPendingWrites });
@@ -194,6 +195,21 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
         const w=profile.data().workspaceID;
         if(w!==plan?.workspaceID)throw new Error('Hushållet har ändrats. Bekräfta raderingen igen.');
         const spaceRef=workspace(w),ownMember=doc(spaceRef,'members',userID);
+        // Audit identity removal is independent of push notification activation.
+        // Re-read inside the transaction so a concurrent editor's identity is kept.
+        let auditCursor=null;
+        for(;;){
+          const lists=await getDocsFromServer(query(collection(spaceRef,'lists'),orderBy(documentId()),...(auditCursor?[startAfter(auditCursor)]:[]),limit(100)));
+          for(const listRow of lists.docs)for(const field of ['createdByUID','updatedByUID'])for(;;){
+            const authored=await getDocsFromServer(query(collection(listRow.ref,'items'),where(field,'==',userID),limit(200)));
+            if(authored.empty)break;
+            await runTransaction(db,async transaction=>{
+              const current=await Promise.all(authored.docs.map(row=>transaction.get(row.ref)));
+              for(const row of current)if(row.exists()&&row.data()[field]===userID)transaction.update(row.ref,{[field]:deleteField()});
+            });
+          }
+          if(lists.size<100)break;auditCursor=lists.docs.at(-1);
+        }
         if(pushDataEnabled){
           await updateDoc(profileRef,{deletingAccount:true});
           await purgeDocuments(collection(profileRef,'devices'));
@@ -304,7 +320,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       return queued((async () => {
         const key = await productID(values.name);
         const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
-        batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null, ...actorFields() });
+        batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null, createdByUID:uid(), ...auditFields(), ...actorFields() });
         batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});
         batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
         await batch.commit(); return ref.id;
@@ -315,7 +331,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       return queued((async () => {
         const key = await productID(values.name), batch = writeBatch(db);
         // Keep checkoff and both dates: another shopper may have changed them.
-        batch.update(item(workspaceID, listID, itemID), values);
+        batch.update(item(workspaceID, listID, itemID), {...values,...auditFields()});
         batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});
         batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
         return batch.commit();
@@ -323,7 +339,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     },
     toggleItem(workspaceID, listID, itemID, checked) {
       uid(); if (typeof checked !== 'boolean') throw new Error('Ogiltig avbockning.');
-      const batch=writeBatch(db);batch.update(item(workspaceID,listID,itemID),{checked,...(checked?{checkedAt:serverTimestamp()}:{}),...actorFields()});batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
+      const batch=writeBatch(db);batch.update(item(workspaceID,listID,itemID),{checked,...(checked?{checkedAt:serverTimestamp()}:{}),...auditFields(),...actorFields()});batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
     },
     deleteItem(workspaceID, listID, itemID) {
       uid();const batch=writeBatch(db);batch.delete(item(workspaceID,listID,itemID));batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());

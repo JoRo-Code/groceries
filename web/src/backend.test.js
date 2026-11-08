@@ -145,7 +145,7 @@ test('list ordering preserves legacy lists and sorts shared recent activity befo
  assert.deepEqual(sortLists(lists).map(l=>l.id),['fresh','old','a','z']);assert.equal(lists[0].id,'z');
 });
 
-test('push-enabled shared deletion removes devices and actor references while preserving grocery data', {skip:process.env.HANDLA_EMULATOR_TESTS!=='true'},async()=>{
+test('push-enabled shared deletion removes devices and actor references while preserving grocery data', {skip:process.env.HANDLA_EMULATOR_TESTS!=='true'||process.env.HANDLA_RULES_FILE==='firestore.production.rules'},async()=>{
  const clients=['owner','guest'].map(role=>createBackend({projectId:'demo-handla'},{appName:`push-${role}-${crypto.randomUUID()}`,emulators:true,pushDataEnabled:true}));const [owner,guest]=clients;
  try{
   for(const client of clients)await client.signUp(`push-${crypto.randomUUID()}@example.test`,'TestPassword123!');
@@ -157,5 +157,29 @@ test('push-enabled shared deletion removes devices and actor references while pr
   const uid=guest.auth.currentUser.uid;await guest.deleteAccountData(await guest.prepareAccountDeletion());
   item=(await getDoc(ref)).data();assert.equal(item.name,'Bevarad vara');assert.equal(item.checked,true);assert.equal(item.lastActorUID,undefined);assert.equal(item.lastActionAt,undefined);
   const remaining=await(await fetch(`http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents/users/${uid}/devices`,{headers:{Authorization:'Bearer owner'}})).json();assert.equal(remaining.documents?.length??0,0);
+ }finally{await Promise.all(clients.map(c=>terminate(c.db)));await Promise.all(clients.map(c=>deleteApp(c.app)))}
+});
+
+test('audit authors survive collaborators and own identities are scrubbed without push activation', {skip:process.env.HANDLA_EMULATOR_TESTS!=='true'},async()=>{
+ const clients=['owner','guest'].map(role=>createBackend({projectId:'demo-handla'},{appName:`audit-${role}-${crypto.randomUUID()}`,emulators:true}));const [owner,guest]=clients;
+ try{
+  for(const client of clients)await client.signUp(`audit-${crypto.randomUUID()}@example.test`,'TestPassword123!');
+  const w=await owner.createWorkspace('Audit QA'),l=await owner.addList(w,'Shared');await guest.joinWorkspace((await owner.createInvite(w)).split('/').at(-1));
+  const ownerID=owner.auth.currentUser.uid,guestID=guest.auth.currentUser.uid;
+  const guestItem=await guest.addItem(w,l,{name:'Gästens vara',quantity:'1',category:'other'});
+  const guestRef=doc(owner.db,'workspaces',w,'lists',l,'items',guestItem);
+  let row=(await getDoc(guestRef)).data();assert.equal(row.createdByUID,guestID);assert.equal(row.updatedByUID,guestID);assert.ok(row.updatedAt);assert.equal(row.lastActorUID,undefined);
+  const createdAt=row.createdAt;await owner.updateItem(w,l,guestItem,{name:'Delad vara',quantity:'2',category:'other'});
+  row=(await getDoc(guestRef)).data();assert.equal(row.createdByUID,guestID);assert.equal(row.updatedByUID,ownerID);assert.ok(row.createdAt.isEqual(createdAt));
+  const ownerItem=await owner.addItem(w,l,{name:'Ägarens vara',category:'other'}),ownerRef=doc(owner.db,'workspaces',w,'lists',l,'items',ownerItem);
+  await guest.toggleItem(w,l,ownerItem,true);row=(await getDoc(ownerRef)).data();assert.equal(row.createdByUID,ownerID);assert.equal(row.updatedByUID,guestID);const checkedAt=row.checkedAt;
+  await guest.toggleItem(w,l,ownerItem,false);row=(await getDoc(ownerRef)).data();assert.ok(row.checkedAt.isEqual(checkedAt));assert.equal(row.updatedByUID,guestID);
+  // Exercise the 200-record cleanup boundary without notification fields.
+  const {writeBatch,serverTimestamp}=await import('firebase/firestore');const batch=writeBatch(guest.db);
+  for(let i=0;i<201;i++)batch.set(doc(guest.db,'workspaces',w,'lists',l,'items',`audit-${i}`),{name:'Auditvara',quantity:'',category:'other',checked:false,checkedAt:null,createdAt:serverTimestamp(),createdByUID:guestID,updatedByUID:guestID,updatedAt:serverTimestamp()});
+  await batch.commit();await guest.deleteAccountData(await guest.prepareAccountDeletion());
+  row=(await getDoc(guestRef)).data();assert.equal(row.createdByUID,undefined);assert.equal(row.updatedByUID,ownerID);assert.equal(row.name,'Delad vara');
+  row=(await getDoc(ownerRef)).data();assert.equal(row.createdByUID,ownerID);assert.equal(row.updatedByUID,undefined);assert.ok(row.updatedAt);assert.ok(row.checkedAt.isEqual(checkedAt));
+  const all=(await getDocs(collection(owner.db,'workspaces',w,'lists',l,'items'))).docs;assert.equal(all.length,203);assert.ok(all.every(d=>d.data().createdByUID!==guestID&&d.data().updatedByUID!==guestID));
  }finally{await Promise.all(clients.map(c=>terminate(c.db)));await Promise.all(clients.map(c=>deleteApp(c.app)))}
 });

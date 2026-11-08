@@ -1,0 +1,54 @@
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import {before,after,beforeEach,test} from 'node:test';
+import {initializeTestEnvironment,assertSucceeds,assertFails} from '@firebase/rules-unit-testing';
+import {doc,setDoc,getDoc,updateDoc,deleteField,serverTimestamp,Timestamp} from 'firebase/firestore';
+let env;
+const db=(uid,fresh=false)=>env.authenticatedContext(uid,fresh?{auth_time:Math.floor(Date.now()/1000)}:{}).firestore();
+const ref=(uid,fresh=false,id='item')=>doc(db(uid,fresh),`workspaces/audit/lists/week/items/${id}`);
+const values=()=>({name:'Mjölk',quantity:'1 l',category:'dairy',checked:false,createdAt:serverTimestamp(),checkedAt:null});
+const audit=uid=>({createdByUID:uid,updatedByUID:uid,updatedAt:serverTimestamp()});
+before(async()=>{env=await initializeTestEnvironment({projectId:'demo-handla',firestore:{host:'127.0.0.1',port:8185,rules:await readFile(process.env.HANDLA_RULES_FILE||'firestore.rules','utf8')}})});
+after(async()=>{await env.cleanup()});
+beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisabled(async c=>{const d=c.firestore();await setDoc(doc(d,'workspaces/audit'),{name:'Audit',ownerID:'owner'});await setDoc(doc(d,'workspaces/audit/lists/week'),{name:'Veckan'});for(const uid of ['owner','guest']){await setDoc(doc(d,`workspaces/audit/members/${uid}`),{role:uid==='owner'?'owner':'member'});await setDoc(doc(d,`users/${uid}`),{workspaceID:'audit'})}})});
+test('audit creation requires the authenticated creator/editor and server time',async()=>{
+ await assertSucceeds(setDoc(ref('owner'),{...values(),...audit('owner')}));
+ await assertFails(setDoc(ref('guest',false,'forged'),{...values(),...audit('owner')}));
+ await assertFails(setDoc(ref('guest',false,'forged'),{...values(),...audit('guest'),updatedAt:Timestamp.fromMillis(1)}));
+ await assertFails(setDoc(ref('guest',false,'partial'),{...values(),createdByUID:'guest'}));
+ await assertFails(setDoc(ref('outsider'),{...values(),...audit('outsider')}));
+});
+test('edits and checkoff record current editor without changing creator or forged dates',async()=>{
+ await setDoc(ref('owner'),{...values(),...audit('owner')});
+ await assertSucceeds(updateDoc(ref('guest'),{quantity:'2 l',updatedByUID:'guest',updatedAt:serverTimestamp()}));
+ assert.equal((await getDoc(ref('owner'))).data().createdByUID,'owner');
+ await assertFails(updateDoc(ref('guest'),{createdByUID:'guest'}));
+ await assertFails(updateDoc(ref('guest'),{updatedByUID:'owner',updatedAt:serverTimestamp()}));
+ await assertFails(updateDoc(ref('guest'),{updatedAt:Timestamp.fromMillis(1)}));
+ await assertFails(updateDoc(ref('guest'),{updatedByUID:deleteField(),updatedAt:deleteField()}));
+ await assertSucceeds(updateDoc(ref('owner'),{checked:true,checkedAt:serverTimestamp(),updatedByUID:'owner',updatedAt:serverTimestamp()}));
+ const checked=(await getDoc(ref('owner'))).data().checkedAt;
+ await assertSucceeds(updateDoc(ref('guest'),{checked:false,updatedByUID:'guest',updatedAt:serverTimestamp()}));
+ const row=(await getDoc(ref('owner'))).data();assert.equal(row.updatedByUID,'guest');assert.ok(row.checkedAt.isEqual(checked));
+});
+test('legacy clients still work and last recorded authorship is not rewritten or invented',async()=>{
+ await setDoc(ref('owner'),{...values(),...audit('owner')});
+ const before=(await getDoc(ref('guest'))).data();await assertSucceeds(updateDoc(ref('guest'),{quantity:'3 l'}));
+ const after=(await getDoc(ref('guest'))).data();assert.equal(after.updatedByUID,'owner');assert.ok(after.updatedAt.isEqual(before.updatedAt));
+ await assertSucceeds(setDoc(ref('guest',false,'legacy'),values()));
+ await assertSucceeds(updateDoc(ref('owner',false,'legacy'),{quantity:'4 l',updatedByUID:'owner',updatedAt:serverTimestamp()}));
+ assert.equal((await getDoc(ref('guest',false,'legacy'))).data().createdByUID,undefined);
+ await assertFails(updateDoc(ref('owner',false,'legacy'),{createdByUID:'owner'}));
+});
+test('account cleanup removes only own identity references and preserves dates/content',async()=>{
+ await setDoc(ref('owner'),{...values(),...audit('owner')});
+ await updateDoc(ref('guest'),{updatedByUID:'guest',updatedAt:serverTimestamp()});
+ const before=(await getDoc(ref('owner'))).data();
+ await assertFails(updateDoc(ref('guest',true),{createdByUID:deleteField()}));
+ await assertFails(updateDoc(ref('owner'),{createdByUID:deleteField()}));
+ await assertFails(updateDoc(ref('owner',true),{createdByUID:deleteField(),name:'Rewritten'}));
+ await assertSucceeds(updateDoc(ref('owner',true),{createdByUID:deleteField()}));
+ await assertSucceeds(updateDoc(ref('guest',true),{updatedByUID:deleteField()}));
+ const after=(await getDoc(ref('owner'))).data();assert.equal(after.createdByUID,undefined);assert.equal(after.updatedByUID,undefined);assert.equal(after.name,before.name);assert.ok(after.updatedAt.isEqual(before.updatedAt));assert.ok(after.createdAt.isEqual(before.createdAt));
+ await assertSucceeds(updateDoc(ref('owner'),{quantity:'5 l',updatedByUID:'owner',updatedAt:serverTimestamp()}));
+});

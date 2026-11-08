@@ -1,0 +1,38 @@
+import fs from 'node:fs';
+import {chromium,expect} from '/Users/joro/src/smile/node_modules/@playwright/test/index.mjs';
+import {createBackend} from '../../web/src/backend.js';
+import {getDocFromServer,getDocsFromServer,collection,doc,terminate} from '../../web/node_modules/firebase/firestore/dist/index.mjs';
+import {deleteApp} from '../../web/node_modules/firebase/app/dist/index.mjs';
+const credentials=JSON.parse(fs.readFileSync('/tmp/handla-app-review-credentials.json','utf8'));
+const env=fs.readFileSync(new URL('../../web/.env.local',import.meta.url),'utf8');
+const config=JSON.parse(env.split('\n').find(x=>x.startsWith('VITE_FIREBASE_CONFIG=')).slice(21));
+const api=createBackend(config,{appName:'audit-live-'+crypto.randomUUID()});
+const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+let itemID,listID,workspaceID;
+try{
+ await api.signIn(credentials.email,credentials.password);
+ expect(api.auth.currentUser.uid).toBe(credentials.uid);
+ const profile=(await getDocFromServer(doc(api.db,'users',credentials.uid))).data();workspaceID=profile.workspaceID;
+ expect(workspaceID).toBe(credentials.workspaceID);
+ const lists=await getDocsFromServer(collection(api.db,'workspaces',workspaceID,'lists'));
+ const selected=lists.docs.find(x=>x.id===profile.lastViewedListID)||lists.docs[0];if(!selected)throw Error('No reviewer list');listID=selected.id;
+ const name='QA attribution '+crypto.randomUUID().slice(0,8);
+ console.log('Checking live item creation');
+ itemID=await api.addItem(workspaceID,listID,{name,quantity:'1 st',category:'other'});
+ const ref=doc(api.db,'workspaces',workspaceID,'lists',listID,'items',itemID);
+ let row=(await getDocFromServer(ref)).data();expect(row.createdByUID).toBe(credentials.uid);expect(row.updatedByUID).toBe(credentials.uid);expect(row.updatedAt.toMillis()).toBeGreaterThan(0);const createdAt=row.createdAt.toMillis();
+ console.log('Checking live item edits');
+ await api.updateItem(workspaceID,listID,itemID,{name,quantity:'2 st',category:'produce'});
+ console.log('Checking live check and restore');
+ await api.toggleItem(workspaceID,listID,itemID,true);await api.toggleItem(workspaceID,listID,itemID,false);
+ row=(await getDocFromServer(ref)).data();expect(row.createdByUID).toBe(credentials.uid);expect(row.createdAt.toMillis()).toBe(createdAt);expect(row.updatedByUID).toBe(credentials.uid);expect(row.updatedAt.toMillis()).toBeGreaterThanOrEqual(createdAt);expect(row.checked).toBe(false);expect(row.checkedAt.toMillis()).toBeGreaterThan(0);expect(row.lastActorUID).toBeUndefined();
+ const page=await browser.newPage({viewport:{width:390,height:844}});
+ await page.goto('https://app.palisty.com');await page.getByRole('button',{name:'Fortsätt med e-post',exact:true}).click();await page.getByLabel('E-postadress',{exact:true}).fill(credentials.email);await page.getByLabel('Lösenord',{exact:true}).fill(credentials.password);await page.getByRole('button',{name:'Logga in',exact:true}).click();
+ await expect(page.getByRole('button',{name:`Ändra ${name}, mängd 2 st`,exact:true})).toBeVisible({timeout:30000});await page.getByRole('button',{name:`Ändra ${name}, mängd 2 st`,exact:true}).click();
+ await expect(page.locator('.item-actor')).toHaveCount(2);await expect(page.locator('.item-actor').first()).toHaveText('Du');await expect(page.locator('.item-actor').last()).toHaveText('Du');await expect(page.locator('.item-dates')).toContainText('Senast registrerade ändring');
+ expect(await page.getByRole('dialog').evaluate(e=>e.scrollWidth<=e.clientWidth)).toBe(true);
+ console.log(JSON.stringify({passed:true,isolatedReviewerOnly:true,serverAttribution:true,creatorPreserved:true,editCheckRestore:true,liveDetails:true,pushStillDisabled:true}));
+}finally{
+ if(itemID){console.log('Removing isolated QA item');await api.deleteItem(workspaceID,listID,itemID);}
+ await browser.close();await terminate(api.db);await deleteApp(api.app);
+}

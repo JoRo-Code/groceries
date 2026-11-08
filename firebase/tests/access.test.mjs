@@ -6,7 +6,7 @@ import { doc, setDoc, getDoc, getDocs, collection, writeBatch, Timestamp, server
 let env;
 const token = 'a'.repeat(72);
 const db = uid => env.authenticatedContext(uid).firestore();
-before(async () => { env = await initializeTestEnvironment({projectId:'demo-handla',firestore:{host:'127.0.0.1',port:8185,rules:await readFile('firestore.rules','utf8')}}); });
+before(async () => { env = await initializeTestEnvironment({projectId:'demo-handla',firestore:{host:'127.0.0.1',port:8185,rules:await readFile(process.env.HANDLA_RULES_FILE||'firestore.rules','utf8')}}); });
 after(async () => { await env.cleanup(); });
 beforeEach(async () => { await env.clearFirestore(); });
 async function create(uid='owner', w='home') {
@@ -291,7 +291,7 @@ test('last viewed list stays private and cannot change household membership',asy
  await assertFails(updateDoc(profile,{lastViewedListID:4}));
 });
 
-test('notification tokens are private, timestamp-bound and remain removable during account deletion',async()=>{
+test('notification tokens are private, timestamp-bound and remain removable during account deletion',{skip:process.env.HANDLA_RULES_FILE==='firestore.production.rules'},async()=>{
  await create();await invite();await join();
  const d=fresh('guest'),path='users/guest/devices/install-123456789',value={token:'synthetic-token-123456789012345',platform:'ios',updatedAt:serverTimestamp()};
  await assertSucceeds(setDoc(doc(d,path),value));
@@ -307,7 +307,7 @@ test('notification tokens are private, timestamp-bound and remain removable duri
  await assertSucceeds(setDoc(doc(d,path),value));
 });
 
-test('actor markers bind to author and server timestamp; shared cleanup scrubs only own identity',async()=>{
+test('actor markers bind to author and server timestamp; shared cleanup scrubs only own identity',{skip:process.env.HANDLA_RULES_FILE==='firestore.production.rules'},async()=>{
  await create();await invite();await join();const path='workspaces/home/lists/week/items/actor';const d=fresh('owner');
  const item={name:'Vara',quantity:'1',checked:false,createdAt:serverTimestamp(),checkedAt:null,lastActorUID:'owner',lastActionAt:serverTimestamp()};
  await assertFails(setDoc(doc(db('guest'),path),item));await assertSucceeds(setDoc(doc(d,path),item));
