@@ -523,8 +523,6 @@ struct ItemsView: View {
                     VStack(spacing: 0) {
                         if !preview && observation.loading {
                             ProgressView().padding(24)
-                        } else if items.isEmpty {
-                            Text("Lägg till det ni behöver handla.").foregroundStyle(.secondary).padding(.top, 26)
                         }
                         VStack(spacing: 0) { ForEach(active) { item in groceryRow(item) } }
                         Spacer(minLength: bought.isEmpty ? 32 : 80)
@@ -568,6 +566,7 @@ struct ItemsView: View {
                         items: items, preview: preview, onAdd: add, onClose: closeComposer)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color(uiColor: .systemBackground))
+                        .transition(.identity)
                 }
                 }
                 }
@@ -618,8 +617,14 @@ struct ItemsView: View {
         .onDisappear { observation.stop() }
     }
     private func closeComposer() {
-        addFocused = false; adding = false; revealName = nil
-        query = ""; quantity = ""; category = .other; manualCategory = false; fullCatalogue = false
+        // Do not animate list/composer state along with the keyboard dismissal.
+        // The existing list stays mounted beneath the suggestions throughout.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            addFocused = false; adding = false; revealName = nil
+            query = ""; quantity = ""; category = .other; manualCategory = false; fullCatalogue = false
+        }
     }
     private func add(_ rawName: String, category: GroceryCategory) {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
