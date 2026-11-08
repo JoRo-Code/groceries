@@ -426,6 +426,12 @@ struct ItemsView: View {
     let onShowLists: () -> Void
     let onRename: (String) throws -> Void
     @StateObject private var observation = GroceryObservation()
+    @FocusState private var addFocused: Bool
+    @State private var query = ""
+    @State private var quantity = ""
+    @State private var category: GroceryCategory = .other
+    @State private var manualCategory = false
+    @State private var fullCatalogue = false
     @State private var adding: Bool
     @State private var revealName: String?
     @State private var renaming = false
@@ -459,7 +465,7 @@ struct ItemsView: View {
                         Text("\(listCount)").font(.system(size: 12, weight: .medium)).offset(x: 3, y: 2)
                     }.frame(width: 44, height: 44)
                 }.accessibilityLabel("Mina listor, \(listCount) listor")
-                Spacer()
+                Spacer().frame(height: 44).contentShape(Rectangle()).onTapGesture { if adding { closeComposer() } }
                 Button { showingWorkspace = true } label: {
                     Image(systemName: "person.2").font(.system(size: 24, weight: .light)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Hushållets medlemmar")
@@ -471,22 +477,29 @@ struct ItemsView: View {
                     Image(systemName: "ellipsis").font(.system(size: 25, weight: .medium)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Fler alternativ")
             }.foregroundStyle(handlaBlue).padding(.horizontal, 14).padding(.top, 3)
+            VStack(alignment: .leading, spacing: 16) {
+                Text(list.name).font(.system(size: 36, weight: .bold)).tracking(-0.8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle()).onTapGesture { if adding { closeComposer() } }
+                HStack(spacing: 10) {
+                    Image(systemName: "plus").font(.system(size: 21, weight: .light)).foregroundStyle(Color(uiColor: .secondaryLabel))
+                    TextField("Ny vara", text: $query, prompt: Text("Ny vara").foregroundStyle(Color(uiColor: .secondaryLabel))).font(.system(size: 19)).focused($addFocused)
+                        .submitLabel(.done).onSubmit { add(query, category: category) }
+                        .accessibilityLabel("Ny vara")
+                        .onTapGesture { adding = true; addFocused = true }
+                    if adding {
+                        Button(action: closeComposer) { Image(systemName: "xmark").font(.system(size: 18)).frame(width: 32, height: 44) }
+                            .accessibilityLabel("Stäng lägg till vara")
+                    }
+                }.padding(.horizontal, 15).frame(height: 51)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+            }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
+                .background { Color.clear.contentShape(Rectangle()).onTapGesture { if adding { closeComposer() } } }
             GeometryReader { geometry in
                 ScrollViewReader { proxy in
+                ZStack(alignment: .top) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text(list.name).font(.system(size: 36, weight: .bold)).tracking(-0.8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Button { var transaction = Transaction(); transaction.disablesAnimations = true; withTransaction(transaction) { adding = true } } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "plus").font(.system(size: 21, weight: .light))
-                                    Text("Ny vara").font(.system(size: 19))
-                                    Spacer()
-                                }.foregroundStyle(Color(uiColor: .secondaryLabel)).padding(.horizontal, 15).frame(height: 51)
-                                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-                            }.accessibilityLabel("Ny vara")
-                        }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
                         if !preview && observation.loading {
                             ProgressView().padding(24)
                         } else if items.isEmpty {
@@ -520,7 +533,7 @@ struct ItemsView: View {
                             Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(7)
                         }
                     }.frame(minHeight: geometry.size.height, alignment: .top)
-                }.scrollIndicators(.hidden)
+                }.scrollIndicators(.hidden).scrollDisabled(adding).allowsHitTesting(!adding)
                 .task(id: "\(adding)-\(revealName ?? "")-\(items.first(where: { GroceryCatalog.normalized($0.name) == revealName && !$0.checked })?.id ?? "")") {
                     guard !adding, let name = revealName,
                           let item = items.first(where: { GroceryCatalog.normalized($0.name) == name && !$0.checked }) else { return }
@@ -528,17 +541,24 @@ struct ItemsView: View {
                     do { try await Task.sleep(for: .seconds(2)) } catch { return }
                     if revealName == name { withAnimation { revealName = nil } }
                 }
+                if adding {
+                    GrocerySuggestionsOverlay(query: $query, quantity: $quantity, category: $category,
+                        manualCategory: $manualCategory, fullCatalogue: $fullCatalogue,
+                        items: items, preview: preview, onAdd: add, onClose: closeComposer)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(uiColor: .systemBackground))
+                }
+                }
                 }
             }
         }
         .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
         .tint(handlaBlue)
-        .navigationDestination(isPresented: $adding) {
-            AddGroceriesView(list: list, preview: preview, exampleItems: $exampleItems) { name in
-                revealName = GroceryCatalog.normalized(name)
-                adding = false
-            }
+        .onChange(of: addFocused) { _, focused in if focused { adding = true } }
+        .onChange(of: query) { _, value in
+            if value.isEmpty { manualCategory = false; category = .other }
+            else if !manualCategory { category = store.suggestions.first(where: { $0.id == GroceryCatalog.normalized(value) })?.category ?? GroceryCatalog.category(for: value) }
         }
         .alert("Byt namn på listan", isPresented: $renaming) {
             TextField("Listans namn", text: $renamedList)
@@ -562,6 +582,7 @@ struct ItemsView: View {
         .onAppear {
             if !preview { observation.start(store: store, listID: list.id) }
             #if DEBUG
+            if adding && !ProcessInfo.processInfo.arguments.contains("--preview-hide-keyboard") { addFocused = true }
             if preview && ProcessInfo.processInfo.arguments.contains("--preview-members") { showingWorkspace = true }
             if preview && ProcessInfo.processInfo.arguments.contains("--preview-history") { previewHistoryCount = 20 }
             if preview && ProcessInfo.processInfo.arguments.contains("--preview-details") { editing = exampleItems.first(where: { $0.id == "bread" }) }
@@ -571,6 +592,37 @@ struct ItemsView: View {
             if phase == .active && !preview { Task { await observation.refresh(store: store, listID: list.id) } }
         }
         .onDisappear { observation.stop() }
+    }
+    private func closeComposer() {
+        addFocused = false; adding = false; revealName = nil
+        query = ""; quantity = ""; category = .other; manualCategory = false; fullCatalogue = false
+    }
+    private func add(_ rawName: String, category: GroceryCategory) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if let existing = items.first(where: { GroceryCatalog.normalized($0.name) == GroceryCatalog.normalized(name) }) {
+            if existing.checked {
+                if preview, let index = exampleItems.firstIndex(where: { $0.id == existing.id }) {
+                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category, createdAt: existing.createdAt, checkedAt: existing.checkedAt)
+                } else {
+                    let session = store.sessionID
+                    store.itemsRef(list.id)?.document(existing.id).updateData(["checked": false]) { error in
+                        Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
+                    }
+                }
+            }
+            closeComposer()
+            revealName = GroceryCatalog.normalized(existing.name)
+            return
+        }
+        do {
+            if preview {
+                guard name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Varunamnet eller mängden är för långt.") }
+                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category, createdAt: Date()))
+            } else { try store.addItem(name, quantity: quantity, category: category, listID: list.id) }
+            closeComposer()
+            revealName = GroceryCatalog.normalized(name)
+        } catch { store.error = error.localizedDescription }
     }
     private func groceryRow(_ item: Grocery) -> some View {
         HStack(spacing: 0) {
@@ -693,21 +745,18 @@ private struct OverviewRow: View {
     }
 }
 
-private struct AddGroceriesView: View {
+
+private struct GrocerySuggestionsOverlay: View {
     @EnvironmentObject private var store: Store
-    @Environment(\.dismiss) private var dismiss
-    let list: ShoppingList
+    @Binding var query: String
+    @Binding var quantity: String
+    @Binding var category: GroceryCategory
+    @Binding var manualCategory: Bool
+    @Binding var fullCatalogue: Bool
+    let items: [Grocery]
     let preview: Bool
-    @Binding var exampleItems: [Grocery]
-    let onAdded: (String) -> Void
-    @StateObject private var observation = GroceryObservation()
-    @State private var query = ""
-    @State private var quantity = ""
-    @State private var category: GroceryCategory = .other
-    @State private var manualCategory = false
-    @State private var fullCatalogue = false
-    @FocusState private var focused: Bool
-    private var items: [Grocery] { preview ? exampleItems : observation.items }
+    let onAdd: (String, GroceryCategory) -> Void
+    let onClose: () -> Void
     private var suggestions: [GrocerySuggestion] {
         if !GroceryCatalog.normalized(query).isEmpty {
             return Array(GroceryCatalog.suggestions(matching: query, custom: store.suggestions).prefix(80))
@@ -726,18 +775,6 @@ private struct AddGroceriesView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: 47)
-            VStack(alignment: .leading, spacing: 16) {
-                Text(list.name).font(.system(size: 36, weight: .bold)).tracking(-0.8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 10) {
-                    Image(systemName: "plus").font(.system(size: 21, weight: .light)).foregroundStyle(.secondary)
-                    TextField("Ny vara", text: $query).font(.system(size: 19)).focused($focused).submitLabel(.done).onSubmit { addTyped() }
-                    Button { focused = false; dismiss() } label: {
-                        Image(systemName: "xmark").font(.system(size: 18)).frame(width: 32, height: 44)
-                    }.accessibilityLabel("Stäng lägg till vara")
-                }.padding(.horizontal, 15).frame(height: 51).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-            }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
             if !query.isEmpty {
                 VStack(spacing: 10) {
                     TextField("Mängd, t.ex. 2 l", text: $quantity).font(.subheadline).accessibilityLabel("Mängd för ny vara")
@@ -748,9 +785,10 @@ private struct AddGroceriesView: View {
                             ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) }
                         }.tint(category.color).pickerStyle(.menu).accessibilityLabel("Kategori för ny vara")
                     }
-                    Button("Lägg till vara") { addTyped() }.buttonStyle(.borderedProminent).tint(HandlaPalette.filledButton).frame(maxWidth: .infinity, alignment: .trailing)
+                    Button("Lägg till vara") { onAdd(query, category) }.buttonStyle(.borderedProminent).tint(HandlaPalette.filledButton).frame(maxWidth: .infinity, alignment: .trailing)
                 }.padding(.horizontal, 23).padding(.bottom, 12)
             }
+            GeometryReader { suggestionsGeometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -761,7 +799,7 @@ private struct AddGroceriesView: View {
                     }
                     ChipLayout(spacing: 7) {
                         ForEach(suggestions) { suggestion in
-                            Button { add(suggestion.name, category: manualCategory ? category : suggestion.category) } label: {
+                            Button { onAdd(suggestion.name, manualCategory ? category : suggestion.category) } label: {
                                 HStack(spacing: 5) {
                                     Text(suggestion.name).font(.system(size: 15, weight: .medium))
                                     if items.contains(where: { GroceryCatalog.normalized($0.name) == suggestion.id && !$0.checked }) {
@@ -776,52 +814,12 @@ private struct AddGroceriesView: View {
                     if suggestions.isEmpty { Text("Tryck på Lägg till vara för att lägga till \(query).").font(.subheadline).foregroundStyle(.secondary) }
                     if preview && showPreviewWatermark { Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(.top, 16) }
                     Color.clear.frame(maxWidth: .infinity).frame(minHeight: 220).contentShape(Rectangle())
-                        .onTapGesture { focused = false; dismiss() }
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 23).padding(.top, 3)
+                        .onTapGesture { onClose() }
+                }.frame(maxWidth: .infinity, minHeight: suggestionsGeometry.size.height, alignment: .topLeading).padding(.horizontal, 23).padding(.top, 3)
             }.scrollDismissesKeyboard(.interactively)
+            }
         }
         .background(Color(uiColor: .systemBackground)).tint(handlaBlue).toolbar(.hidden, for: .navigationBar)
-        .onChange(of: query) { _, value in
-            if value.isEmpty { manualCategory = false; category = .other }
-            else if !manualCategory { category = store.suggestions.first(where: { $0.id == GroceryCatalog.normalized(value) })?.category ?? GroceryCatalog.category(for: value) }
-        }
-        .onAppear {
-            if !preview { observation.start(store: store, listID: list.id) }
-            #if DEBUG
-            if !ProcessInfo.processInfo.arguments.contains("--preview-hide-keyboard") { focused = true }
-            #else
-            focused = true
-            #endif
-        }
-        .onDisappear { observation.stop() }
-    }
-    private func addTyped() { add(query, category: category) }
-    private func add(_ rawName: String, category: GroceryCategory) {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        if let existing = items.first(where: { GroceryCatalog.normalized($0.name) == GroceryCatalog.normalized(name) }) {
-            if existing.checked {
-                if preview, let index = exampleItems.firstIndex(where: { $0.id == existing.id }) {
-                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category, createdAt: existing.createdAt, checkedAt: existing.checkedAt)
-                } else {
-                    let session = store.sessionID
-                    store.itemsRef(list.id)?.document(existing.id).updateData(["checked": false]) { error in
-                        Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
-                    }
-                }
-            }
-            focused = false
-            onAdded(existing.name)
-            return
-        }
-        do {
-            if preview {
-                guard name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Varunamnet eller mängden är för långt.") }
-                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category, createdAt: Date()))
-            } else { try store.addItem(name, quantity: quantity, category: category, listID: list.id) }
-            focused = false
-            onAdded(name)
-        } catch { store.error = error.localizedDescription }
     }
 }
 
