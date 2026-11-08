@@ -18,9 +18,34 @@ Integritets- och supportlänkar är implementerade på /privacy och /support i n
 4. **Integritetspolicy och support saknas.** Ingen motsvarande publik fil eller in-app-länk hittad. GET /privacy returnerar SPA HTML, inte en policy. Firebase/web-ägare publicerar riktiga statiska sidor; integration länkar policy lättåtkomligt både före inloggning och i hushåll. Root måste ge korrekt ansvarig aktör/kontaktuppgift; hitta inte på uppgifter. Policy ska beskriva data, Firebase, hushållsdelning, lagring/radering och kontakt. [Apple riktlinjer 5.1.1(i)](https://developer.apple.com/app-store/review/guidelines/), [supportfältets kontaktkrav](https://developer.apple.com/help/app-store-connect/reference/app-information/platform-version-information/).
 5. **App Store-formulär återstår att verifiera i ASC.** Integration äger UI: App Privacy, support/privacy URL, åldersklassning, rättigheter, tillgänglighet/pris, exportkryptering och granskningskontakt/testkonto. Bygg2:s France=No är intern betascope, inte ett generellt besked för alla länder. Kontoinnehavarens juridiska/trader-uppgifter ska vara faktiska. Ingen parallell ASC-session från denna agent.
 
-## Datadeklaration att slutföra
+## Datadeklaration: verifierad SDK-audit
 
-Kod visar FirebaseAuth+Firestore, medlemsnamn/e-postfallback, användar-ID, hushåll/listnamn, produkter/antal/kategori och senaste avbockningsdatum. Preliminär App Privacy: Name, Email Address, User ID, Other User Content, alla kopplade till konto för App Functionality. Bedöm även Purchase History eftersom avbockade inköp/tid lagras, inte bara fritext; välj efter Apples definition och slutlig implementation. Ingen Analytics/Crashlytics-dependency hittad i project.yml, ingen annonsering/spårning observerad; granska även Firebase SDK:s deklarationer innan slutliga svar. Svara inte Data Not Collected. Manifestet PrivacyInfo.xcprivacy innehåller UserDefaults CA92.1; detta ersätter varken butikens privacy-svar eller policyn. [Apple definitioner](https://developer.apple.com/app-store/app-privacy-details/).
+Granskad2026-11-08 mot faktiskt inbäddade PrivacyInfo.xcprivacy i .build/Build/Products/Debug-iphonesimulator/Handla.app och Package.resolved Firebase12.19.3. project.yml länkar FirebaseAuth och FirebaseFirestore; inga Analytics/Crashlytics/Performance-produkter. Upplösta men olänkade transitive package-repositories är inte bevis för datainsamling i appen. Ingen FirebaseDataCollectionDefaultEnabled=false eller motsvarande runtime-avstängning hittades.
+
+Faktiska manifests:
+
+- Firebase_FirebaseAuth.bundle: OtherDiagnosticData, Analytics, linked=false, tracking=false; UserID, AppFunctionality, linked=true, tracking=false.
+- Firebase_FirebaseFirestore.bundle och FirebaseFirestoreInternal_Privacy.bundle: OtherDiagnosticData, Analytics, linked=false, tracking=false.
+- Övriga inbäddade SDK-manifests deklarerar inga insamlade datatyper; alla SDK-manifests anger tracking=false och tomma trackingdomäner.
+- Appens eget manifest anger UserDefaults CA92.1. Det ersätter inte butikens privacy-svar eller en integritetspolicy.
+
+Rekommenderade ASC-svar för den aktuella nativeappen:
+
+| Datatyp | Syfte | Kopplad till användaren | Spårning | Underlag |
+| --- | --- | --- | --- | --- |
+| Name | App Functionality | Ja | Nej | Apple-profilnamn och hushållets medlemsnamn |
+| Email Address | App Functionality | Ja | Nej | Firebase-inloggning, medlemsnamnets fallback |
+| User ID | App Functionality | Ja | Nej | Firebase Auth-ID, profil/medlemskap, SDKmanifest |
+| Other User Content | App Functionality | Ja | Nej | Listnamn, varunamn, mängd, kategori och egna sparade varor |
+| Purchase History | App Functionality | Ja | Nej | Kontoanknuten inköpslista och avbockade varor med inköpshistorik |
+| Other Diagnostic Data | Analytics | Nej | Nej | FirebaseAuth/Firestore-manifests, Firebase user-agent |
+| Other Data Types | App Functionality | Ja (försiktighetsbedömning) | Nej | Behållna Auth-IP-adresser/säkerhetsloggar; se bedömning nedan |
+
+Firebase dokumenterar att dess user-agent innehåller enhet/OS/app/plattform för versions- och plattformsanalys, utan koppling till användar- eller enhetsidentifierare. SDK-manifestets exakta mapping är därför Other Diagnostic Data → Analytics → inte kopplad, inte spårning. Ingen FirebaseAnalytics-produkt behövs för att denna separata SDK-telemetri ska finnas. [Firebase data disclosures](https://firebase.google.com/docs/ios/app-store-data-collection).
+
+Firebase beskriver också att Auth behåller IP-adresser i några veckor för säkerhet/missbruksskydd. Dokumentationen lovar inte att dessa IP-loggar är anonymiserade eller aldrig kontokopplade. **Vår bedömning**, inte ett uttryckligt vendorbesked: deklarera säkerhets-IP som Other Data Types, App Functionality, linked=yes. Detta håller faktisk oidentifierad SDK-telemetri separat från konservativ bedömning av säkerhetsloggar. Apple definierar teknisk diagnostik som mätdata om teknisk diagnostik, och IP-typ ska väljas efter användningen; behållen IP är inte automatiskt platsdata eller ett enhets-ID. Ingen platsfunktion eller IP-geolokalisering hittad i appen. [Firebase lagring/säkerhet](https://firebase.google.com/support/privacy), [Apple datatyper och IP-vägledning](https://developer.apple.com/app-store/app-privacy-details/).
+
+Inga belägg för Crash Data, Performance Data, Device ID, reklamidentifierare, exakt/grov plats, adressbok, bilder, ljud eller annons-/marknadsföringssyften i den aktuella nativeimplementationen. Sökning sker lokalt; inte Search History. Sparade egna produktförslag bedöms som funktion för användarens egen katalog, inte separat beteendeprofilering. Alla ovanstående typer: ingen tracking. Root/ASC-ägaren använder samma uppgifter i offentlig policy; eventuell framtida ändring av SDK/insamling kräver ny bedömning.
 
 ## Färdiga svenska butikstexter
 
