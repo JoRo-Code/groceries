@@ -77,3 +77,25 @@ test('two users share lists, edit without losing checkoff, remember categories, 
     await guest.signOut();await owner.signOut();
   } finally { await Promise.all([terminate(owner.db),terminate(guest.db),terminate(outsider.db)]);await Promise.all([deleteApp(owner.app),deleteApp(guest.app),deleteApp(outsider.app)]); }
 });
+
+test('bounded history pagination covers tied dates, unknown dates and restores without losing last purchase', {skip:process.env.HANDLA_EMULATOR_TESTS!=='true'},async()=>{
+ const backend=createBackend({projectId:'demo-handla'},{appName:`history-${crypto.randomUUID()}`,emulators:true});
+ try{
+  await backend.signUp(`history-${crypto.randomUUID()}@example.test`,'TestPassword123!');
+  const w=await backend.createWorkspace('History QA'),l=await backend.addList(w,'Test');
+  const path=`projects/demo-handla/databases/(default)/documents/workspaces/${w}/lists/${l}/items`;
+  const cutoff=new Date(Date.now()-86400000),old=new Date(cutoff.getTime()-10000).toISOString(),recent=new Date().toISOString();
+  const writes=Array.from({length:48},(_,i)=>({update:{name:`${path}/seed-${String(i).padStart(3,'0')}`,fields:{name:{stringValue:`Item ${i}`},quantity:{stringValue:''},category:{stringValue:'other'},checked:{booleanValue:true},createdAt:{timestampValue:old},checkedAt:i<25?{timestampValue:old}:i<47?{nullValue:null}:{timestampValue:recent}}}}));
+  const response=await fetch('http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents:commit',{method:'POST',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({writes})});assert.equal(response.status,200);
+  let cursor=null,hasMore=true;const all=[];const sizes=[];
+  while(hasMore){const page=await backend.listOlderItems(w,l,cutoff,{cursor});sizes.push(page.items.length);all.push(...page.items);cursor=page.cursor;hasMore=page.hasMore;assert.ok(sizes.length<5)}
+  assert.deepEqual(sizes,[20,20,7]);assert.equal(new Set(all.map(x=>x.id)).size,47);
+  assert.ok(all.slice(0,25).every(x=>x.checkedAt));assert.ok(all.slice(25).every(x=>x.checkedAt===null));
+  const recentItems=await new Promise((resolve,reject)=>{let stop=()=>{};stop=backend.watchRecentItems(w,l,cutoff,(items,meta)=>{if(!meta.fromCache){stop();resolve(items)}},reject)});
+  assert.deepEqual(recentItems.map(x=>x.id),['seed-047']);
+  await backend.toggleItem(w,l,'seed-000',false);
+  const restored=(await getDoc(doc(backend.db,`${path.split('/documents/')[1]}/seed-000`))).data();assert.equal(restored.checked,false);assert.equal(restored.checkedAt.toDate().toISOString(),old);
+  const active=await new Promise((resolve,reject)=>{let stop=()=>{};stop=backend.watchActiveItems(w,l,(items,meta)=>{if(!meta.fromCache){stop();resolve(items)}},reject)});assert.deepEqual(active.map(x=>x.id),['seed-000']);
+  await backend.toggleItem(w,l,'seed-000',true);const rechecked=(await getDoc(doc(backend.db,`${path.split('/documents/')[1]}/seed-000`))).data();assert.ok(rechecked.checkedAt.toMillis()>cutoff.getTime());assert.equal(rechecked.createdAt.toDate().toISOString(),old);
+ }finally{await terminate(backend.db);await deleteApp(backend.app)}
+});

@@ -6,7 +6,7 @@ import {
 } from 'firebase/auth';
 import {
   initializeFirestore, memoryLocalCache, connectFirestoreEmulator, collection, doc,
-  getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField,
+  getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField, serverTimestamp, query, where, orderBy, documentId, limit, startAfter, getDocsFromServer,
 } from 'firebase/firestore';
 
 export const categoryIDs = ['produce', 'dairy', 'meat', 'fish', 'bakery', 'pantry', 'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'];
@@ -64,7 +64,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     callback(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null, metadata(snapshot));
   }, error);
   const watchCollection = (ref, callback, error) => onSnapshot(ref, { includeMetadataChanges: true }, snapshot => {
-    callback(snapshot.docs.map(d => ({ id: d.id, ...d.data() })), metadata(snapshot));
+    callback(snapshot.docs.map(d => ({ id: d.id, ...d.data({serverTimestamps: 'estimate'}) })), metadata(snapshot));
   }, error);
 
   const providerLogin = async provider => {
@@ -83,6 +83,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     }
   };
   return {
+    hasPendingWrites: () => pendingWrites > 0,
     app, auth, db,
     signInWithGoogle: () => {
       const provider = new GoogleAuthProvider();
@@ -124,6 +125,28 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     },
     watchMembers: (id, callback, error) => watchCollection(collection(workspace(id), 'members'), callback, error),
     watchItems: (w, l, callback, error) => watchCollection(collection(list(w, l), 'items'), callback, error),
+    watchActiveItems: (w, l, callback, error) => watchCollection(query(collection(list(w,l),'items'),where('checked','==',false)),callback,error),
+    watchRecentItems: (w, l, cutoff, callback, error) => watchCollection(query(collection(list(w,l),'items'),where('checked','==',true),where('checkedAt','>=',Timestamp.fromDate(cutoff)),orderBy('checkedAt','desc')),callback,error),
+    async listOlderItems(w,l,cutoff,{cursor=null,pageSize=20}={}) {
+      uid();
+      if (!(cutoff instanceof Date) || !Number.isFinite(cutoff.getTime()) || !Number.isInteger(pageSize) || pageSize<1 || pageSize>20) throw new Error('Ogiltig historiksida.');
+      const source=collection(list(w,l),'items');
+      const phase=cursor?.phase??'dated';
+      const constraints=[where('checked','==',true),...(phase==='dated'?[where('checkedAt','<',Timestamp.fromDate(cutoff)),orderBy('checkedAt','desc')]:[where('checkedAt','==',null),orderBy(documentId())])];
+      if(cursor?.snapshot)constraints.push(startAfter(cursor.snapshot));
+      const result=await getDocsFromServer(query(source,...constraints,limit(pageSize+1)));
+      const docs=result.docs.slice(0,pageSize);
+      const items=docs.map(d=>({id:d.id,...d.data()}));
+      if(result.size>pageSize)return {items,cursor:{phase,snapshot:docs.at(-1)},hasMore:true};
+      if(phase==='dated') {
+        const unknown=await getDocsFromServer(query(source,where('checked','==',true),where('checkedAt','==',null),orderBy(documentId()),limit(pageSize-items.length+1)));
+        const remaining=pageSize-items.length;
+        const added=unknown.docs.slice(0,remaining);
+        items.push(...added.map(d=>({id:d.id,...d.data()})));
+        return {items,cursor:{phase:'unknown',snapshot:added.at(-1)??null},hasMore:unknown.size>remaining};
+      }
+      return {items,cursor:null,hasMore:false};
+    },
     async createWorkspace(name) {
       name = displayName(name);
       const userID = uid(), profile = doc(db, 'users', userID);
@@ -188,7 +211,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     async addItem(workspaceID, listID, data) {
       uid(); const values = validateGrocery(data), key = await productID(values.name);
       const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
-      batch.set(ref, { ...values, checked: false });
+      batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null });
       batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
       await queued(batch.commit()); return ref.id;
     },
@@ -201,7 +224,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     },
     toggleItem(workspaceID, listID, itemID, checked) {
       uid(); if (typeof checked !== 'boolean') throw new Error('Ogiltig avbockning.');
-      return queued(updateDoc(item(workspaceID, listID, itemID), { checked }));
+      return queued(updateDoc(item(workspaceID, listID, itemID), { checked, ...(checked ? {checkedAt:serverTimestamp()} : {}) }));
     },
     deleteItem(workspaceID, listID, itemID) {
       uid(); return queued(deleteDoc(item(workspaceID, listID, itemID)));
@@ -229,6 +252,9 @@ export const watchLists = call('watchLists');
 export const watchProducts = call('watchProducts');
 export const watchMembers = call('watchMembers');
 export const watchItems = call('watchItems');
+export const watchActiveItems = call('watchActiveItems');
+export const watchRecentItems = call('watchRecentItems');
+export const listOlderItems = call('listOlderItems');
 export const createWorkspace = call('createWorkspace');
 export const getInvite = call('getInvite');
 export const joinWorkspace = call('joinWorkspace');
@@ -252,3 +278,5 @@ export const signInWithApple = (...args) => {
   return call('signInWithApple')(...args);
 };
 export const completeRedirect = call('completeRedirect');
+
+export const hasPendingWrites = () => backend?.hasPendingWrites() ?? false;
