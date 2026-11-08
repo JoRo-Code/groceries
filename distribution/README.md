@@ -35,3 +35,5 @@ Upload reported nonfatal symbol warnings for Xcode-generated wrappers around Fir
 Build **1.0 (4)** adds adaptive colors and a local System/Ljust/Mörkt preference. Verified Testing in the same internal group alongside2; see [build4 evidence](../qa/testflight-build4.md). Export options preserve the explicitly chosen build number; do not reuse an older archive for a new build.
 
 Build **1.0 (6)** is uploaded and Testing in the existing internal group. Public App Store version 1.0 with build 6 was submitted on 2026-11-08 and is **Waiting for Review**, with automatic release in Sweden after approval. See [submission evidence](../qa/app-store-submission.md) and [build 6 evidence](../qa/testflight-build6.md).
+
+Build **1.0 (7)** is uploaded, processed and **Testing** in the existing internal group, verified after a fresh reload. It adds item authorship details and keeps the list stationary while closing suggestions. Public version 1.0 build 6 remains submitted; no replacement public review was requested. See [build 7 evidence](../qa/testflight-build7.md).
