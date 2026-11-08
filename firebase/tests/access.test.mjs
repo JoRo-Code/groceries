@@ -271,3 +271,22 @@ test('deletion can resume after reauthentication and cannot transfer to a member
  const finish=writeBatch(d);finish.delete(doc(d,'workspaces/home'));finish.delete(doc(d,'workspaces/home/members/owner'));finish.delete(doc(d,'users/owner'));await assertSucceeds(finish.commit());
  await env.withSecurityRulesDisabled(async context=>{assert.equal((await getDoc(doc(context.firestore(),'workspaces/home'))).exists(),false);assert.equal((await getDoc(doc(context.firestore(),'users/owner'))).exists(),false)});
 });
+
+test('shared list activity accepts only server timestamps and preserves legacy name edits',async()=>{
+ await create();await invite();await join();const ref=doc(db('guest'),'workspaces/home/lists/week');
+ await assertSucceeds(updateDoc(ref,{lastChangedAt:serverTimestamp()}));
+ await assertSucceeds(updateDoc(ref,{name:'Nytt namn'}));
+ await assertFails(updateDoc(ref,{lastChangedAt:Timestamp.fromMillis(1)}));
+ await assertFails(updateDoc(ref,{lastChangedAt:deleteField()}));
+ await assertFails(updateDoc(doc(db('outsider'),'workspaces/home/lists/week'),{lastChangedAt:serverTimestamp()}));
+});
+
+test('last viewed list stays private and cannot change household membership',async()=>{
+ await create();await invite();await join();const d=db('guest'),profile=doc(d,'users/guest');
+ await assertSucceeds(updateDoc(profile,{lastViewedListID:'week'}));
+ await assertFails(getDoc(doc(db('owner'),'users/guest')));
+ await assertFails(updateDoc(doc(db('owner'),'users/guest'),{lastViewedListID:'week'}));
+ await assertFails(updateDoc(profile,{workspaceID:'other',lastViewedListID:'week'}));
+ await assertFails(updateDoc(profile,{lastViewedListID:'missing-list'}));
+ await assertFails(updateDoc(profile,{lastViewedListID:4}));
+});

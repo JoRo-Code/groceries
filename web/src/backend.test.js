@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deleteApp } from 'firebase/app';
 import { disableNetwork, enableNetwork, getDoc, doc, getDocs, collection, terminate } from 'firebase/firestore';
-import { createBackend, normalizeName, productID, validateGrocery, validateInviteToken } from './backend.js';
+import { createBackend, sortLists, normalizeName, productID, validateGrocery, validateInviteToken } from './backend.js';
 
 test('names normalize consistently for product keys and validation rejects malformed values', async () => {
   assert.equal(normalizeName('  MJÖLK  '), 'mjolk');
@@ -57,6 +57,14 @@ test('two users share lists, edit without losing checkoff, remember categories, 
     await assert.rejects(guest.signOut(),/synkning/);
     await enableNetwork(guest.db);await renamePending;
     assert.equal((await getDoc(doc(owner.db,'workspaces',workspaceID,'lists',listID))).data().name,'Helgens mat');
+    const secondList=await owner.addList(workspaceID,'Annan lista');
+    const beforeView=(await getDoc(doc(guest.db,'workspaces',workspaceID,'lists',listID))).data().lastChangedAt;
+    await guest.setLastViewedList(workspaceID,listID);
+    assert.equal((await getDoc(doc(guest.db,'users',guest.auth.currentUser.uid))).data().lastViewedListID,listID);
+    assert.ok((await getDoc(doc(guest.db,'workspaces',workspaceID,'lists',listID))).data().lastChangedAt.isEqual(beforeView));
+    await guest.renameList(workspaceID,listID,'Helgens mat');
+    const ordered=await new Promise((resolve,reject)=>{let stop=()=>{};stop=owner.watchLists(workspaceID,(values,meta)=>{if(!meta.fromCache){stop();resolve(values)}},reject)});
+    assert.equal(ordered[0].id,listID);assert.ok(ordered.some(value=>value.id===secondList));
     const itemID=await owner.addItem(workspaceID,listID,{name:'Mjölk',quantity:'2 l',category:'dairy'});
     await guest.toggleItem(workspaceID,listID,itemID,true);
     await owner.updateItem(workspaceID,listID,itemID,{name:'Mjölk',quantity:'3 l',category:'pantry'});
@@ -130,4 +138,9 @@ test('account cleanup preserves shared data, rechecks successor and recursively 
   assert.equal((await fetch(`${root}/workspaces/${w}`,{headers:{Authorization:'Bearer owner'}})).status,404);
   assert.equal((await fetch(`${root}/users/${guest.auth.currentUser.uid}`,{headers:{Authorization:'Bearer owner'}})).status,404);
  }finally{await Promise.all(clients.map(c=>terminate(c.db)));await Promise.all(clients.map(c=>deleteApp(c.app)))}
+});
+
+test('list ordering preserves legacy lists and sorts shared recent activity before name/id',()=>{
+ const lists=[{id:'z',name:'Zebra'},{id:'a',name:'Apelsin'},{id:'fresh',name:'Ny',lastChangedAt:new Date(2000)},{id:'old',name:'Gammal',lastChangedAt:new Date(1000)}];
+ assert.deepEqual(sortLists(lists).map(l=>l.id),['fresh','old','a','z']);assert.equal(lists[0].id,'z');
 });

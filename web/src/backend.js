@@ -9,6 +9,10 @@ import {
   getDocFromServer, onSnapshot, writeBatch, setDoc, updateDoc, deleteDoc, Timestamp, deleteField, serverTimestamp, query, where, orderBy, documentId, limit, startAfter, getDocsFromServer, runTransaction,
 } from 'firebase/firestore';
 
+export const sortLists = lists => [...lists].sort((a,b) => {
+  const time=value=>value?.toMillis?.()??(value instanceof Date?value.getTime():0);
+  return time(b.lastChangedAt)-time(a.lastChangedAt)||a.name.localeCompare(b.name,'sv')||a.id.localeCompare(b.id);
+});
 export const memberDisplayName = user => (user?.displayName?.trim() || user?.email?.trim() || '').slice(0,160);
 export const categoryIDs = ['produce', 'dairy', 'meat', 'fish', 'bakery', 'pantry', 'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'];
 export const normalizeName = value => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('sv-SE').trim().replace(/\s+/gu, ' ');
@@ -130,7 +134,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       }
     }, error),
     watchWorkspace: (id, callback, error) => watchDoc(workspace(id), callback, error),
-    watchLists: (id, callback, error) => watchCollection(collection(workspace(id), 'lists'), callback, error),
+    watchLists: (id, callback, error) => watchCollection(collection(workspace(id), 'lists'), (rows,meta)=>callback(sortLists(rows),meta), error),
     watchProducts: (id, callback, error) => {
       let generation = 0, active = true;
       const stop = watchCollection(collection(workspace(id), 'products'), async (products, meta) => {
@@ -222,8 +226,9 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       const ref = doc(collection(db, 'workspaces')), batch = writeBatch(db);
       batch.set(ref, { name, ownerID: userID });
       batch.set(doc(ref, 'members', userID), { role: 'owner', ...(memberDisplayName(auth.currentUser)?{displayName:memberDisplayName(auth.currentUser)}:{}) });
-      batch.set(profile, { workspaceID: ref.id });
-      batch.set(doc(collection(ref, 'lists')), { name: 'Veckohandling' });
+      const firstList=doc(collection(ref,'lists'));
+      batch.set(profile, { workspaceID: ref.id, lastViewedListID:firstList.id });
+      batch.set(firstList, { name: 'Veckohandling', lastChangedAt:serverTimestamp() });
       await queued(batch.commit());
       return ref.id;
     },
@@ -270,11 +275,15 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     addList(workspaceID, name) {
       uid(); name = displayName(name);
       const ref = doc(collection(workspace(workspaceID), 'lists'));
-      return queued(setDoc(ref, { name })).then(() => ref.id);
+      const batch=writeBatch(db);batch.set(ref,{name,lastChangedAt:serverTimestamp()});batch.update(doc(db,'users',uid()),{lastViewedListID:ref.id});
+      return queued(batch.commit()).then(() => ref.id);
+    },
+    setLastViewedList(workspaceID,listID) {
+      const userID=uid();return queued(updateDoc(doc(db,'users',userID),{workspaceID,lastViewedListID:listID}));
     },
     renameList(workspaceID, listID, name) {
       uid(); name = displayName(name);
-      return queued(updateDoc(list(workspaceID, listID), { name }));
+      return queued(updateDoc(list(workspaceID, listID), { name, lastChangedAt:serverTimestamp() }));
     },
     addItem(workspaceID, listID, data) {
       uid(); const values = validateGrocery(data);
@@ -282,6 +291,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
         const key = await productID(values.name);
         const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
         batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null });
+        batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});
         batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
         await batch.commit(); return ref.id;
       })());
@@ -292,16 +302,17 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
         const key = await productID(values.name), batch = writeBatch(db);
         // Keep checkoff and both dates: another shopper may have changed them.
         batch.update(item(workspaceID, listID, itemID), values);
+        batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});
         batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
         return batch.commit();
       })());
     },
     toggleItem(workspaceID, listID, itemID, checked) {
       uid(); if (typeof checked !== 'boolean') throw new Error('Ogiltig avbockning.');
-      return queued(updateDoc(item(workspaceID, listID, itemID), { checked, ...(checked ? {checkedAt:serverTimestamp()} : {}) }));
+      const batch=writeBatch(db);batch.update(item(workspaceID,listID,itemID),{checked,...(checked?{checkedAt:serverTimestamp()}:{})});batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
     },
     deleteItem(workspaceID, listID, itemID) {
-      uid(); return queued(deleteDoc(item(workspaceID, listID, itemID)));
+      uid();const batch=writeBatch(db);batch.delete(item(workspaceID,listID,itemID));batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
     },
   };
 }
@@ -335,6 +346,7 @@ export const joinWorkspace = call('joinWorkspace');
 export const createInvite = call('createInvite');
 export const revokeInvite = call('revokeInvite');
 export const addList = call('addList');
+export const setLastViewedList = call('setLastViewedList');
 export const renameList = call('renameList');
 export const addItem = call('addItem');
 export const updateItem = call('updateItem');

@@ -30,10 +30,17 @@ service cloud.firestore {
     }
     match /users/{uid} {
       allow get: if signedIn() && uid == request.auth.uid;
+      allow update: if signedIn() && uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastViewedListID'])
+        && request.resource.data.lastViewedListID is string
+        && member(resource.data.workspaceID)
+        && existsAfter(/databases/$(database)/documents/workspaces/$(resource.data.workspaceID)/lists/$(request.resource.data.lastViewedListID));
       allow delete: if signedIn() && uid == request.auth.uid && recentLogin()
         && !existsAfter(memberPath(resource.data.workspaceID));
       allow create: if signedIn() && uid == request.auth.uid
-        && request.resource.data.keys().hasOnly(['workspaceID'])
+        && request.resource.data.keys().hasOnly(['workspaceID','lastViewedListID'])
+        && (!('lastViewedListID' in request.resource.data) || (request.resource.data.lastViewedListID is string
+          && existsAfter(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceID)/lists/$(request.resource.data.lastViewedListID))))
         && request.resource.data.workspaceID is string
         && existsAfter(memberPath(request.resource.data.workspaceID));
     }
@@ -85,10 +92,12 @@ service cloud.firestore {
         allow read: if member(w);
         allow create: if signedIn() && existsAfter(memberPath(w))
           && (!exists(workspacePath(w)) || unlocked(w))
-          && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
+          && request.resource.data.keys().hasOnly(['name','lastChangedAt']) && text(request.resource.data.name, 80)
+          && (!('lastChangedAt' in request.resource.data) || request.resource.data.lastChangedAt == request.time);
         allow delete: if purging(w);
         allow update: if canWrite(w)
-          && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
+          && request.resource.data.keys().hasOnly(['name','lastChangedAt']) && text(request.resource.data.name, 80)
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastChangedAt']) || request.resource.data.lastChangedAt == request.time);
         match /items/{item} {
           allow read: if member(w);
           allow delete: if canWrite(w) || purging(w);

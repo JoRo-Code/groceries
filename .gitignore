@@ -30,3 +30,6 @@ qa/browser/*failure*.png
 *.ipa
 *.xcdistributionlogs/
 *.pfx
+
+# Temporary explicit Hosting release config
+firebase/firebase.app-only.generated.json
