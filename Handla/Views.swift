@@ -57,7 +57,7 @@ struct RootView: View {
                 Text("Välkommen till \(invite.name)").font(.title.bold()).multilineTextAlignment(.center)
                 Text("Ni delar alla inköpslistor och sparade varor i hushållet.").multilineTextAlignment(.center)
                 Button("Anslut till hushållet") { store.perform { try await store.join(invite) } }
-                    .buttonStyle(.borderedProminent).disabled(store.busy)
+                    .buttonStyle(.borderedProminent).tint(HandlaPalette.filledButton).disabled(store.busy)
                 Button("Inte nu") { store.dismissInvite() }.disabled(store.busy)
                 if let error = store.error { Text(error).foregroundStyle(.red).font(.caption) }
             }.padding(32).presentationDetents([.medium, .large]).interactiveDismissDisabled(store.busy)
@@ -69,6 +69,7 @@ struct RootView: View {
 }
 
 struct SignInView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var store: Store
     @State private var email = ""
     @State private var password = ""
@@ -103,7 +104,7 @@ struct SignInView: View {
                         Text(creatingAccount ? "Skapa konto" : "Logga in")
                         Spacer()
                     }.frame(minHeight: 36)
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(.borderedProminent).tint(HandlaPalette.filledButton)
                     .disabled(store.busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                 if !creatingAccount {
                     Button("Glömt lösenordet?") {
@@ -112,6 +113,7 @@ struct SignInView: View {
                 }
                 HStack { Rectangle().frame(height: 1); Text("eller").font(.caption); Rectangle().frame(height: 1) }.foregroundStyle(.tertiary)
                 SignInWithAppleButton(.continue, onRequest: store.prepareApple, onCompletion: store.finishApple)
+                    .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                     .frame(height: 50).clipShape(RoundedRectangle(cornerRadius: 12)).disabled(store.busy)
             }.padding(28)
         }
@@ -173,6 +175,7 @@ struct ListsView: View {
 }
 
 struct WorkspaceView: View {
+    @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
     var preview = false
     private var sampleMembers: [HouseholdMember] {
         [HouseholdMember(id: "sample-owner", role: "owner", displayName: "Alex Andersson", isCurrentUser: true),
@@ -184,6 +187,13 @@ struct WorkspaceView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Utseende") {
+                    Picker("Utseende", selection: $appearance) {
+                        ForEach(AppAppearance.allCases, id: \.rawValue) { option in
+                            Text(option.title).tag(option.rawValue)
+                        }
+                    }.pickerStyle(.segmented)
+                }
                 Section("Hushåll") {
                     Label(preview ? "Exempelhushållet" : store.workspaceName, systemImage: "house.fill")
                     Text("\(roster.count) \(roster.count == 1 ? "medlem" : "medlemmar")").foregroundStyle(.secondary)
@@ -223,26 +233,57 @@ struct WorkspaceView: View {
     }
 }
 
-private extension GroceryCategory {
-    var color: Color {
-        switch self {
-        case .produce: Color(red: 0.35, green: 0.66, blue: 0.25)
-        case .dairy: Color(red: 0.30, green: 0.63, blue: 0.86)
-        case .meat: Color(red: 0.84, green: 0.32, blue: 0.37)
-        case .fish: Color(red: 0.25, green: 0.68, blue: 0.70)
-        case .bakery: Color(red: 0.85, green: 0.63, blue: 0.29)
-        case .pantry: Color(red: 0.91, green: 0.72, blue: 0.25)
-        case .frozen: Color(red: 0.45, green: 0.55, blue: 0.84)
-        case .drinks: Color(red: 0.64, green: 0.43, blue: 0.73)
-        case .snacks: Color(red: 0.91, green: 0.48, blue: 0.29)
-        case .household: Color(red: 0.52, green: 0.58, blue: 0.65)
-        case .hygiene: Color(red: 0.84, green: 0.48, blue: 0.65)
-        case .other: Color(red: 0.64, green: 0.64, blue: 0.62)
-        }
+private enum HandlaPalette {
+    static func uiColor(_ hex: UInt32) -> UIColor {
+        UIColor(red: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: 1)
     }
+    static func adaptive(light: UInt32, dark: UInt32) -> Color {
+        Color(uiColor: UIColor { traits in uiColor(traits.userInterfaceStyle == .dark ? dark : light) })
+    }
+    static func chip(light: UInt32, dark: UInt32) -> Color {
+        Color(uiColor: UIColor { traits in
+            let isDark = traits.userInterfaceStyle == .dark
+            let foreground = isDark ? dark : light
+            let base: CGFloat = isDark ? 0.11 : 1
+            let amount: CGFloat = isDark ? 0.24 : 0.17
+            return UIColor(red: base + (CGFloat((foreground >> 16) & 255) / 255 - base) * amount,
+                           green: base + (CGFloat((foreground >> 8) & 255) / 255 - base) * amount,
+                           blue: base + (CGFloat(foreground & 255) / 255 - base) * amount, alpha: 1)
+        })
+    }
+    static let divider = adaptive(light: 0xD0D4DA, dark: 0x454850)
+    // White plus marks retain contrast even when the surrounding dark-mode tint becomes lighter.
+    static let filledButton = Color(uiColor: uiColor(0x006DC4))
+    static let listColors: [Color] = [
+        adaptive(light: 0x087178, dark: 0x70D8DD), .primary,
+        adaptive(light: 0xA62065, dark: 0xF59AC2),
+        adaptive(light: 0x5143A3, dark: 0xBAACFF),
+        adaptive(light: 0x945000, dark: 0xFFC078)
+    ]
 }
 
-private let handlaBlue = Color(red: 0.02, green: 0.55, blue: 0.95)
+private extension GroceryCategory {
+    var palette: (light: UInt32, dark: UInt32) {
+        switch self {
+        case .produce: (0x397B24, 0x9DD984)
+        case .dairy: (0x206CA1, 0x8BCBFA)
+        case .meat: (0xA93243, 0xFFA3AF)
+        case .fish: (0x0B7178, 0x7CD9DF)
+        case .bakery: (0x835917, 0xE7BE7D)
+        case .pantry: (0x75620E, 0xEAD573)
+        case .frozen: (0x4E5FA8, 0xABBDFC)
+        case .drinks: (0x7F479D, 0xD5AEF0)
+        case .snacks: (0xAB4E23, 0xFFB28C)
+        case .household: (0x536478, 0xB4C6DC)
+        case .hygiene: (0x9E4878, 0xECA9D0)
+        case .other: (0x60605D, 0xC9C9C2)
+        }
+    }
+    var color: Color { HandlaPalette.adaptive(light: palette.light, dark: palette.dark) }
+    var chipBackground: Color { HandlaPalette.chip(light: palette.light, dark: palette.dark) }
+}
+
+private let handlaBlue = HandlaPalette.adaptive(light: 0x006DC4, dark: 0x76C1FF)
 
 @MainActor
 private final class GroceryObservation: ObservableObject {
@@ -447,12 +488,12 @@ struct ItemsView: View {
                         Spacer(minLength: bought.isEmpty ? 32 : 80)
                         if !bought.isEmpty {
                             VStack(spacing: 0) {
-                                DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).foregroundStyle(Color.gray.opacity(0.22))
+                                DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).foregroundStyle(HandlaPalette.divider)
                                 ForEach(bought) { item in groceryRow(item) }
                                 Spacer(minLength: 12)
                             }
                             .frame(minHeight: geometry.size.height * 0.28, alignment: .top)
-                            .background(Color(uiColor: .secondarySystemBackground).opacity(0.75))
+                            .background(Color(uiColor: .secondarySystemBackground))
                         }
                         if canLoadOlder {
                             Button {
@@ -525,7 +566,7 @@ struct ItemsView: View {
     }
     private func groceryRow(_ item: Grocery) -> some View {
         HStack(spacing: 0) {
-            Rectangle().fill(item.category.color.opacity(item.checked ? 0.3 : 1)).frame(width: 5)
+            Rectangle().fill(item.category.color.opacity(item.checked ? 0.8 : 1)).frame(width: 5)
             Button { toggle(item) } label: {
                 HStack {
                     Text(item.name).font(.system(size: 22)).strikethrough(item.checked, color: .secondary)
@@ -544,7 +585,7 @@ struct ItemsView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(revealName == GroceryCatalog.normalized(item.name) ? handlaBlue.opacity(0.17) : Color.clear)
         .id(item.id)
-        .overlay(alignment: .bottom) { DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).padding(.leading, 24).foregroundStyle(Color.gray.opacity(0.27)) }
+        .overlay(alignment: .bottom) { DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).padding(.leading, 24).foregroundStyle(HandlaPalette.divider) }
         .contextMenu {
             Button("Ändra vara", systemImage: "pencil") { editing = item }
             Button("Ta bort", systemImage: "trash", role: .destructive) { remove(item) }
@@ -584,7 +625,7 @@ private struct ListOverview: View {
     @EnvironmentObject private var store: Store
     @State private var creating = false
     @State private var name = ""
-    private let colors: [Color] = [.teal, .black, .pink, .indigo, .orange]
+    private let colors = HandlaPalette.listColors
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
@@ -604,7 +645,7 @@ private struct ListOverview: View {
             }
             Button { creating = true } label: {
                 Image(systemName: "plus").font(.system(size: 31, weight: .light)).foregroundStyle(.white)
-                    .frame(width: 65, height: 65).background(handlaBlue, in: Circle()).shadow(color: .black.opacity(0.12), radius: 5, y: 3)
+                    .frame(width: 65, height: 65).background(HandlaPalette.filledButton, in: Circle()).shadow(color: .black.opacity(0.12), radius: 5, y: 3)
             }.accessibilityLabel("Ny inköpslista").padding(.trailing, 24).padding(.bottom, 22)
         }
         .background(Color(uiColor: .systemBackground)).tint(handlaBlue).toolbar(.hidden, for: .navigationBar)
@@ -638,7 +679,7 @@ private struct OverviewRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }.padding(.horizontal, 24).padding(.vertical, 22).frame(minHeight: 119, alignment: .topLeading).contentShape(Rectangle())
         }.buttonStyle(.plain)
-            .overlay(alignment: .bottom) { Rectangle().fill(Color.gray.opacity(0.18)).frame(height: 0.5) }
+            .overlay(alignment: .bottom) { Rectangle().fill(HandlaPalette.divider).frame(height: 0.5) }
             .onAppear { if !preview { observation.start(store: store, listID: list.id, activeOnly: true) } }
             .onDisappear { observation.stop() }
     }
@@ -699,7 +740,7 @@ private struct AddGroceriesView: View {
                             ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) }
                         }.tint(category.color).pickerStyle(.menu).accessibilityLabel("Kategori för ny vara")
                     }
-                    Button("Lägg till vara") { addTyped() }.buttonStyle(.borderedProminent).frame(maxWidth: .infinity, alignment: .trailing)
+                    Button("Lägg till vara") { addTyped() }.buttonStyle(.borderedProminent).tint(HandlaPalette.filledButton).frame(maxWidth: .infinity, alignment: .trailing)
                 }.padding(.horizontal, 23).padding(.bottom, 12)
             }
             ScrollView {
@@ -719,7 +760,8 @@ private struct AddGroceriesView: View {
                                         Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold))
                                     }
                                 }.foregroundStyle(.primary).padding(.horizontal, 10).padding(.vertical, 8)
-                                    .background(suggestion.category.color.opacity(0.48), in: RoundedRectangle(cornerRadius: 8))
+                                    .background(suggestion.category.chipBackground, in: RoundedRectangle(cornerRadius: 8))
+                                    .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(suggestion.category.color.opacity(0.5), lineWidth: 1) }
                             }.buttonStyle(.plain).accessibilityLabel("Lägg till \(suggestion.name)")
                         }
                     }
@@ -844,7 +886,7 @@ private struct ChipLayout: Layout {
 }
 
 private enum ShoppingExamples {
-    static let lists = [ShoppingList(id: "week", name: "Veckohandling"), ShoppingList(id: "weekend", name: "Till helgen"), ShoppingList(id: "cabin", name: "Sommarstugan")]
+    static let lists = [ShoppingList(id: "week", name: "Veckohandling"), ShoppingList(id: "weekend", name: "Till helgen"), ShoppingList(id: "cabin", name: "Sommarstugan"), ShoppingList(id: "picnic", name: "Utflykten"), ShoppingList(id: "home", name: "Till hemmet")]
     static let items: [String: [Grocery]] = [
         "week": [
             Grocery(id: "banana", name: "Bananer", quantity: "6 st", checked: false, category: .produce),
@@ -856,6 +898,8 @@ private enum ShoppingExamples {
             Grocery(id: "eggs", name: "Ägg", quantity: "12 st", checked: true, category: .dairy)
         ],
         "weekend": [Grocery(id: "salmon", name: "Lax", quantity: "600 g", checked: false, category: .fish), Grocery(id: "potato", name: "Potatis", quantity: "1 kg", checked: false, category: .produce), Grocery(id: "cream", name: "Crème fraiche", quantity: "2 dl", checked: false, category: .dairy)],
+        "picnic": [Grocery(id: "juice", name: "Juice", quantity: "1 l", checked: false, category: .drinks), Grocery(id: "apples", name: "Äpplen", quantity: "4 st", checked: false, category: .produce)],
+        "home": [Grocery(id: "detergent", name: "Tvättmedel", quantity: "1 pkt", checked: false, category: .household), Grocery(id: "toothpaste", name: "Tandkräm", quantity: "1 st", checked: false, category: .hygiene)],
         "cabin": [Grocery(id: "paper", name: "Toalettpapper", quantity: "1 pkt", checked: false, category: .household), Grocery(id: "soap", name: "Diskmedel", quantity: "1 st", checked: false, category: .household)]
     ]
 }
