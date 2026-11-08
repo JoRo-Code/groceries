@@ -4,7 +4,7 @@ Gemensamma inköpslistor för webben och iPhone, med Firebase Authentication, Fi
 
 Webbappen finns i [`web/`](web/README.md) och använder samma hushåll, listor och Firebase-databas. Den kan användas direkt i webbläsaren och läggas på hemskärmen. Native-appen är konfigurerad för `se.groceriesros.handla` och Apple-team `P92GB9QRA5`. Firebase-konfigurationen finns lokalt och är Git-ignorerad; fysisk iPhone-signering återstår. Se [native-inställningar](docs/native-setup.md).
 
-E-post, Google och Apple är aktiverade i Firebase och webbappen. Google- och Apple-knapparna har verifierats öppna respektive leverantörs riktiga inloggningssida. Inga personliga kontouppgifter fylldes i under kontrollen. Se [Apple-inställningarna](firebase/APPLE_SETUP.md).
+E-post, Google och Apple är aktiverade i Firebase och webbappen. Google- och Apple-knapparna har verifierats öppna respektive leverantörs riktiga inloggningssida. Användaren har därefter bekräftat en lyckad fullständig Apple-inloggning på webben. Inga personliga kontouppgifter fylldes i under agentens kontroll. Se [Apple-inställningarna](firebase/APPLE_SETUP.md).
 
 ## Första versionen
 
