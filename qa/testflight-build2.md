@@ -11,3 +11,9 @@
 Evidence logs (local only): /tmp/handla-testflight-signed-retry.log, /tmp/handla-testflight-build2-archive.log, /tmp/handla-testflight-build2-upload.log. Signed archive: /tmp/Handla-TestFlight-build2.xcarchive. Initial signed IPA: /tmp/Handla-TestFlight-IPA/Handla.ipa (build 1, superseded). Distribution output and credentials are excluded from Git.
 
 Initial provisioning failed while the matching key/profile was unavailable; subsequent automatic provisioning supplied them and a signed retry succeeded. No existing certificate was revoked. The original store name Handla was unavailable; authorized existing web brand Handla tillsammans was used. Organizer created the app record, then CLI upload succeeded.
+
+## Follow-up: installation and build 3
+
+App Store Connect later reported the current tester as **Installed 1.0 (2)** on iPhone 16 Pro / iOS 27.0.1. No invitation resend was needed. This confirms installation, not successful native login, invitation or synchronization tests.
+
+A subsequent Organizer upload created build 3 from the **original build-1 archive**, as verified by the distribution log dated 13:46:26 and the source archive (version 1, no app-level PrivacyInfo.xcprivacy). It is not newer source code than build 2. Its export-compliance questionnaire was completed with the same standard-encryption / no-France answers for the current internal beta scope; status became Ready to Submit. Build 3 was not added to a tester group or expired. Intern test retains only the verified build 2 and the current account holder. No public or external distribution occurred.
