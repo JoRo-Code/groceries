@@ -37,7 +37,7 @@ export const shoppingNotifications=onDocumentWritten({document:'workspaces/{work
 // Auth deletion is also handled server-side: older installed clients may not know
 // about actor markers/devices written by a newer client for the same account.
 // Auth deletion triggers are first-generation; Firebase does not expose this trigger in v2.
-export const cleanupDeletedAccount=region('europe-west1').auth.user().onDelete(async user=>{
+export const cleanupDeletedAccount=region('europe-west1').runWith({failurePolicy:true,maxInstances:2}).auth.user().onDelete(async user=>{
  for(;;){const rows=await db.collectionGroup('items').where('lastActorUID','==',user.uid).limit(200).get();if(rows.empty)break;
   const batch=db.batch();for(const row of rows.docs){if(!/^workspaces\/[^/]+\/lists\/[^/]+\/items\/[^/]+$/.test(row.ref.path))throw new Error('Unexpected actor collection path');batch.update(row.ref,{lastActorUID:FieldValue.delete(),lastActionAt:FieldValue.delete()},{lastUpdateTime:row.updateTime})}await batch.commit();
  }
