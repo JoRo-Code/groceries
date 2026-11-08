@@ -483,7 +483,7 @@ struct ItemsView: View {
                                     Image(systemName: "plus").font(.system(size: 21, weight: .light))
                                     Text("Ny vara").font(.system(size: 19))
                                     Spacer()
-                                }.foregroundStyle(.secondary).padding(.horizontal, 15).frame(height: 51)
+                                }.foregroundStyle(Color(uiColor: .secondaryLabel)).padding(.horizontal, 15).frame(height: 51)
                                     .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
                             }.accessibilityLabel("Ny vara")
                         }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
