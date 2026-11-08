@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { before, after, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, getDocs, collection, writeBatch, Timestamp, updateDoc, deleteDoc, deleteField } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, writeBatch, Timestamp, serverTimestamp, updateDoc, deleteDoc, deleteField } from 'firebase/firestore';
 let env;
 const token = 'a'.repeat(72);
 const db = uid => env.authenticatedContext(uid).firestore();
@@ -40,9 +40,9 @@ test('invited members can join and collaborate; invite collection cannot be enum
  await assertSucceeds(getDoc(doc(db('guest'),`invites/${token}`)));
  await assertFails(getDocs(collection(db('guest'),'invites')));
  await assertSucceeds(join());
- await assertSucceeds(setDoc(doc(db('guest'),'workspaces/home/lists/week/items/milk'),{name:'Mjölk',quantity:'2 l',checked:false}));
- await assertSucceeds(updateDoc(doc(db('owner'),'workspaces/home/lists/week/items/milk'),{checked:true}));
- await assertFails(updateDoc(doc(db('outsider'),'workspaces/home/lists/week/items/milk'),{checked:false}));
+ await assertSucceeds(setDoc(doc(db('guest'),'workspaces/home/lists/week/items/milk'),{name:'Mjölk',quantity:'2 l',checked:false,createdAt:serverTimestamp(),checkedAt:null}));
+ await assertSucceeds(updateDoc(doc(db('owner'),'workspaces/home/lists/week/items/milk'),{checked:true,checkedAt:serverTimestamp()}));
+ await assertFails(updateDoc(doc(db('outsider'),'workspaces/home/lists/week/items/milk'),{checked:false,createdAt:serverTimestamp(),checkedAt:null}));
 });
 test('forged and expired invitations cannot grant membership',async()=>{
  await create(); await assertFails(join()); await invite();
@@ -81,7 +81,7 @@ test('a valid invitation cannot be used for a different workspace', async () => 
   await assertFails(join('guest', token, 'member', 'otherHome'));
   await assertSucceeds(join());
   await assertFails(getDoc(doc(db('guest'), 'workspaces/otherHome')));
-  await assertFails(setDoc(doc(db('guest'), 'workspaces/otherHome/lists/week/items/milk'), { name: 'Mjölk', quantity: '', checked: false }));
+  await assertFails(setDoc(doc(db('guest'), 'workspaces/otherHome/lists/week/items/milk'), { name: 'Mjölk', quantity: '', checked: false,createdAt:serverTimestamp(),checkedAt:null }));
 });
 
 test('members can create lists and remember products but cannot write malformed values', async () => {
@@ -91,13 +91,13 @@ test('members can create lists and remember products but cannot write malformed 
   await assertSucceeds(setDoc(doc(d, 'workspaces/home/products/milk'), { name: 'Mjölk' }));
   await assertFails(setDoc(doc(d, 'workspaces/home/products/bad'), { name: 'Mjölk', ownerID: 'guest' }));
   for (const data of [
-    { name: '', quantity: '', checked: false },
-    { name: 'x'.repeat(121), quantity: '', checked: false },
-    { name: 'Mjölk', quantity: 'x'.repeat(81), checked: false },
+    { name: '', quantity: '', checked: false,createdAt:serverTimestamp(),checkedAt:null },
+    { name: 'x'.repeat(121), quantity: '', checked: false,createdAt:serverTimestamp(),checkedAt:null },
+    { name: 'Mjölk', quantity: 'x'.repeat(81), checked: false,createdAt:serverTimestamp(),checkedAt:null },
     { name: 'Mjölk', quantity: '', checked: 'false' },
     { name: 'Mjölk', quantity: '', checked: false, extra: true },
   ]) await assertFails(setDoc(doc(d, 'workspaces/home/lists/week/items/invalid'), data));
-  await assertFails(setDoc(doc(d, 'workspaces/home/lists/missing/items/item'), { name: 'Mjölk', quantity: '', checked: false }));
+  await assertFails(setDoc(doc(d, 'workspaces/home/lists/missing/items/item'), { name: 'Mjölk', quantity: '', checked: false,createdAt:serverTimestamp(),checkedAt:null }));
 });
 
 test('invitation issuance requires owner, bounded expiry and matching workspace metadata', async () => {
@@ -144,7 +144,7 @@ test('all stable categories can be stored on groceries and remembered products',
   const categories = ['produce', 'dairy', 'meat', 'fish', 'bakery', 'pantry', 'frozen', 'drinks', 'snacks', 'household', 'hygiene', 'other'];
   for (const category of categories) {
     const b = writeBatch(d);
-    b.set(doc(d, `workspaces/home/lists/week/items/${category}`), { name: 'Vara', quantity: '1', checked: false, category });
+    b.set(doc(d, `workspaces/home/lists/week/items/${category}`), { name: 'Vara', quantity: '1', checked: false, createdAt:serverTimestamp(),checkedAt:null, category });
     b.set(doc(d, `workspaces/home/products/${category}`), { name: 'Vara', category });
     await assertSucceeds(b.commit());
   }
@@ -155,9 +155,9 @@ test('category edits preserve checked status and allow legacy groceries to be ch
   const d = db('owner');
   const item = doc(d, 'workspaces/home/lists/week/items/milk');
   const product = doc(d, 'workspaces/home/products/milk');
-  await setDoc(item, { name: 'Mjölk', quantity: '2 l', checked: false });
+  await setDoc(item, { name: 'Mjölk', quantity: '2 l', checked: false,createdAt:serverTimestamp(),checkedAt:null });
   await setDoc(product, { name: 'Mjölk' });
-  await assertSucceeds(updateDoc(item, { checked: true }));
+  await assertSucceeds(updateDoc(item, { checked: true,checkedAt:serverTimestamp() }));
   await assertSucceeds(updateDoc(product, { name: 'Havremjölk' }));
   await assertSucceeds(updateDoc(item, { name: 'Havremjölk', quantity: '1 l', category: 'dairy' }));
   await assertSucceeds(updateDoc(product, { category: 'dairy' }));
@@ -175,10 +175,10 @@ test('unknown, malformed and null categories are denied on create and update', a
   const d = db('owner');
   const item = doc(d, 'workspaces/home/lists/week/items/existing');
   const product = doc(d, 'workspaces/home/products/existing');
-  await setDoc(item, { name: 'Mjölk', quantity: '', checked: false, category: 'dairy' });
+  await setDoc(item, { name: 'Mjölk', quantity: '', checked: false, createdAt:serverTimestamp(),checkedAt:null, category: 'dairy' });
   await setDoc(product, { name: 'Mjölk', category: 'dairy' });
   for (const category of ['Dairy', 'mejeri', '', 'unknown', null, 7, ['dairy'], { id: 'dairy' }]) {
-    await assertFails(setDoc(doc(d, 'workspaces/home/lists/week/items/invalid'), { name: 'Mjölk', quantity: '', checked: false, category }));
+    await assertFails(setDoc(doc(d, 'workspaces/home/lists/week/items/invalid'), { name: 'Mjölk', quantity: '', checked: false, createdAt:serverTimestamp(),checkedAt:null, category }));
     await assertFails(setDoc(doc(d, 'workspaces/home/products/invalid'), { name: 'Mjölk', category }));
     await assertFails(updateDoc(item, { category }));
     await assertFails(updateDoc(product, { category }));
@@ -187,4 +187,34 @@ test('unknown, malformed and null categories are denied on create and update', a
   await assertFails(updateDoc(product, { category: 'dairy', injected: true }));
   await assertFails(updateDoc(doc(db('outsider'), 'workspaces/home/lists/week/items/existing'), { category: 'produce' }));
   await assertFails(updateDoc(doc(db('outsider'), 'workspaces/home/products/existing'), { category: 'produce' }));
+});
+
+test('item dates require server timestamps, preserve creation and last purchase on restore',async()=>{
+ await create();const d=db('owner'),ref=doc(d,'workspaces/home/lists/week/items/dates');
+ const values={name:'Ägg',quantity:'6',checked:false};
+ await assertFails(setDoc(ref,values));
+ await assertFails(setDoc(ref,{...values,createdAt:Timestamp.fromMillis(1),checkedAt:null}));
+ await assertSucceeds(setDoc(ref,{...values,createdAt:serverTimestamp(),checkedAt:null}));
+ const created=(await getDoc(ref)).data().createdAt;
+ await assertFails(updateDoc(ref,{createdAt:serverTimestamp()}));
+ await assertFails(updateDoc(ref,{createdAt:deleteField()}));
+ await assertFails(updateDoc(ref,{checked:true}));
+ await assertFails(updateDoc(ref,{checked:true,checkedAt:Timestamp.fromMillis(1)}));
+ await assertSucceeds(updateDoc(ref,{checked:true,checkedAt:serverTimestamp()}));
+ const bought=(await getDoc(ref)).data().checkedAt;
+ await assertFails(updateDoc(ref,{checkedAt:null}));
+ await assertFails(updateDoc(ref,{checked:false,checkedAt:null}));
+ await assertSucceeds(updateDoc(ref,{checked:false}));
+ assert.ok((await getDoc(ref)).data().checkedAt.isEqual(bought));
+ await assertSucceeds(updateDoc(ref,{checked:true,checkedAt:serverTimestamp()}));
+ assert.ok((await getDoc(ref)).data().checkedAt.toMillis()>=bought.toMillis());
+ assert.ok((await getDoc(ref)).data().createdAt.isEqual(created));
+});
+test('legacy documents remain readable and editable without forged dates',async()=>{
+ await create();await env.withSecurityRulesDisabled(async context=>{await setDoc(doc(context.firestore(),'workspaces/home/lists/week/items/legacy'),{name:'Äldre',quantity:'',checked:true})});
+ const ref=doc(db('owner'),'workspaces/home/lists/week/items/legacy');
+ await assertSucceeds(getDoc(ref));await assertSucceeds(updateDoc(ref,{quantity:'2'}));
+ await assertSucceeds(updateDoc(ref,{checked:false}));
+ await assertFails(updateDoc(ref,{checked:true}));
+ await assertSucceeds(updateDoc(ref,{checked:true,checkedAt:serverTimestamp()}));
 });

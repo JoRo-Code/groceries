@@ -1,11 +1,14 @@
 import React, {useEffect, useId, useMemo, useRef, useState} from 'react';
 import {flushSync} from 'react-dom';
 import * as api from './backend.js';
+import {useShoppingHistory} from './useShoppingHistory.js';
+import {DAY_MS,timestampMillis,formatItemDate} from './history.js';
 import {categories, categoryMap, categoryFor, normalize, suggest, sortItems, mergeCatalogue, defaultHints} from './catalogue.js';
 
 const TOKEN=/^[a-f0-9-]{72}$/;
 const DEMO=new URLSearchParams(location.search).get('demo')==='1';
 const demoLists=[{id:'week',name:'Veckohandling'},{id:'weekend',name:'Till helgen'}];
+const demoCreatedAt=new Date(Date.now()-3*DAY_MS);
 const demoItems=[
  {id:'banana',name:'Bananer',quantity:'6 st',category:'produce',checked:false},
  {id:'cucumber',name:'Gurka',quantity:'1 st',category:'produce',checked:false},
@@ -15,7 +18,11 @@ const demoItems=[
  {id:'pasta',name:'Pasta',quantity:'500 g',category:'pantry',checked:false},
  {id:'bread',name:'Bröd',quantity:'1 st',category:'bakery',checked:true},
  {id:'coffee',name:'Kaffe',quantity:'1 pkt',category:'drinks',checked:true}
-];
+].map(item=>({...item,createdAt:demoCreatedAt,checkedAt:item.checked?new Date(Date.now()-2*60*60*1000):null}));
+const demoHistory=new URLSearchParams(location.search).get('history')==='1'?[...demoItems,
+ ...Array.from({length:43},(_,index)=>({id:`older-${String(index).padStart(2,'0')}`,name:`Äldre vara ${String(index+1).padStart(2,'0')}`,quantity:'1 st',category:'other',checked:true,createdAt:new Date(Date.now()-90*DAY_MS),checkedAt:new Date(Date.now()-(index+2)*DAY_MS)})),
+ ...Array.from({length:2},(_,index)=>({id:`unknown-${index}`,name:`Odaterad vara ${index+1}`,quantity:'',category:'other',checked:true,createdAt:null,checkedAt:null}))
+]:demoItems;
 const paths={back:<path d="m15 5-7 7 7 7"/>,stack:<><path d="M6 3h14v15M3 6h14v15H3zM7 11h6m-6 4h6"/></>,catalogue:<><path d="M12 5C8 2 4 3 2 4v16c4-2 7-1 10 1m0-16c4-3 8-2 10-1v16c-4-2-7-1-10 1V5Z"/></>,basket:<><path d="M3 9h18l-2.5 12h-13L3 9ZM7 9l4-6m6 6-4-6M9 13v4m6-4v4"/></>,plus:<path d="M12 5v14M5 12h14"/>,people:<><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m3 10v-3a6 6 0 0 0-2-4"/></>,chevron:<path d="m8 5 7 7-7 7"/>,down:<path d="m6 9 6 6 6-6"/>,check:<path d="m5 12 4 4L19 6"/>,close:<path d="m6 6 12 12M6 18 18 6"/>,more:<><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,edit:<><path d="m14 5 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14l-1 7Z"/></>,logout:<><path d="M9 4H4v16h5m5-4 4-4-4-4m-6 4h10"/></>,copy:<><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 8V4H4v11h4"/></>,wifi:<><path d="M3 8a15 15 0 0 1 18 0M6 12a10 10 0 0 1 12 0m-9 4a5 5 0 0 1 6 0M12 20h.01"/></>,list:<><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></>,arrow:<path d="M12 19V5m-6 6 6-6 6 6"/>,trash:<><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></>};
 function Icon({name,...props}) {return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>{paths[name]??paths.basket}</svg>}
 function humanError(error) {
@@ -77,15 +84,14 @@ function AppContent() {
  const [workspace,setWorkspace]=useState(DEMO?{id:'demo',name:'Hemma hos oss',ownerID:'demo'}:null);
  const [lists,setLists]=useState(DEMO?demoLists:[]);
  const [products,setProducts]=useState([]);const [members,setMembers]=useState(DEMO?[{id:'demo'},{id:'demo-member'}]:[]);
- const [items,setItems]=useState(DEMO?demoItems:[]);
- const [demoData,setDemoData]=useState({week:demoItems,weekend:[]});
+ const [demoData,setDemoData]=useState({week:demoHistory,weekend:[]});
  const [selected,setSelected]=useState(null);
  const [reveal,setReveal]=useState(null);
  const [screen,setScreen]=useState(DEMO?new URLSearchParams(location.search).get('screen')||'list':'list');
  const [listPreviews,setListPreviews]=useState(DEMO?{week:demoItems,weekend:[]}:{});
  const [error,setError]=useState('');const [info,setInfo]=useState('');const [busy,setBusy]=useState(false);
- const [online,setOnline]=useState(navigator.onLine);const [itemsLoading,setItemsLoading]=useState(true);
- const [metadata,setMetadata]=useState({});const [dialog,setDialog]=useState(null);
+ const [online,setOnline]=useState(navigator.onLine);
+ const [dialog,setDialog]=useState(null);
  const [pendingToken,setPendingToken]=useState(savedToken);const [invite,setInvite]=useState(null);const [inviteLoading,setInviteLoading]=useState(false);const [inviteRetry,setInviteRetry]=useState(0);
  const [inviteLink,setInviteLink]=useState('');const [installEvent,setInstallEvent]=useState(null);
  const activeUser=useRef(user?.uid);activeUser.current=user?.uid;
@@ -97,12 +103,16 @@ function AppContent() {
  const owner=workspace?.ownerID===user?.uid;
  useEffect(()=>{if(lists.length&&!lists.some(list=>list.id===selected))setSelected(lists[0].id)},[lists,selected]);
  const report=error=>setError(humanError(error));
+ const shopping=useShoppingHistory({userID:user?.uid,workspaceID,listID,demoItems:DEMO?demoData[listID]:undefined,report});
+ const normalizeRow=item=>({...item,category:categoryMap[item.category]?item.category:categoryFor(item.name,products)});
+ const items=shopping.items.map(normalizeRow);
+ const itemsLoading=shopping.loading,metadata=shopping.metadata;
  useEffect(()=>{const update=()=>setOnline(navigator.onLine);window.addEventListener('online',update);window.addEventListener('offline',update);const install=e=>{e.preventDefault();setInstallEvent(e)};window.addEventListener('beforeinstallprompt',install);return()=>{window.removeEventListener('online',update);window.removeEventListener('offline',update);window.removeEventListener('beforeinstallprompt',install)}},[]);
  useEffect(()=>{
   if(DEMO)return;
   if(!api.configured){setUser(null);return}
   if(!redirectChecked.current){redirectChecked.current=true;api.completeRedirect().catch(report)}
-  return api.onAuth(next=>{setProfile(undefined);setWorkspace(null);setLists([]);setProducts([]);setItems([]);setMembers([]);setSelected(null);setReveal(null);setListPreviews({});setScreen("list");setInvite(null);setError('');setUser(next)});
+  return api.onAuth(next=>{setProfile(undefined);setWorkspace(null);setLists([]);setProducts([]);setMembers([]);setSelected(null);setReveal(null);setListPreviews({});setScreen("list");setInvite(null);setError('');setUser(next)});
  },[]);
  useEffect(()=>{
   if(DEMO||!user)return;
@@ -116,19 +126,11 @@ function AppContent() {
   return()=>{active=false;stops.forEach(stop=>stop?.())};
  },[workspaceID,user?.uid]);
  useEffect(()=>{
-  if(DEMO){setItems(demoData[listID]??[]);setItemsLoading(false);return}
-  setItems([]);setMetadata({});
-  if(!workspaceID||!listID){setItemsLoading(false);return}
-  setItemsLoading(true);let active=true;
-  const stop=api.watchItems(workspaceID,listID,(value,meta)=>{if(active){setItems(value.map(item=>({...item,category:categoryMap[item.category]?item.category:categoryFor(item.name,products)})));setMetadata(meta??{});setItemsLoading(false)}},err=>{if(active){report(err);setItemsLoading(false)}});
-  return()=>{active=false;stop?.()};
- },[workspaceID,listID,user?.uid,DEMO?demoData:null]);
- useEffect(()=>{
   if(screen!=='lists')return;
   if(DEMO){setListPreviews(demoData);return}
   if(!workspaceID||!user)return;
   let active=true;
-  const stops=lists.map(list=>api.watchItems(workspaceID,list.id,(value,meta)=>{
+  const stops=lists.map(list=>api.watchActiveItems(workspaceID,list.id,(value,meta)=>{
    if(active&&(!meta?.fromCache||value.length))setListPreviews(previous=>({...previous,[list.id]:value}));
   },err=>{if(active)report(err)}));
   return()=>{active=false;stops.forEach(stop=>stop?.())};
@@ -155,16 +157,30 @@ function AppContent() {
  function queue(action) {setError('');const uid=user?.uid;try{Promise.resolve(action()).catch(err=>{if(activeUser.current===uid)report(err)});return true}catch(err){report(err);return false}}
  function updateDemo(update) {setDemoData(data=>({...data,[listID]:update(data[listID]??[])}))}
  function remember(product){setProducts(previous=>[...previous.filter(p=>normalize(p.name)!==normalize(product.name)),product])}
- function addItem(data) {if(DEMO){updateDemo(items=>[...items,{id:crypto.randomUUID(),...data,checked:false}]);remember(data);return true}return queue(()=>api.addItem(workspaceID,listID,data))}
+ function addItem(data) {if(DEMO){updateDemo(items=>[...items,{id:crypto.randomUUID(),...data,checked:false,createdAt:new Date(),checkedAt:null}]);remember(data);return true}return queue(()=>api.addItem(workspaceID,listID,data))}
  function renameList(list,name) {
   const trimmed=name.trim();
   if(!trimmed||trimmed.length>80){setError('Ange ett namn med högst 80 tecken.');return false}
   if(DEMO){setLists(previous=>previous.map(value=>value.id===list.id?{...value,name:trimmed}:value));return true}
   return queue(()=>api.renameList(workspaceID,list.id,trimmed));
  }
- function editItem(item,data) {if(DEMO){updateDemo(items=>items.map(p=>p.id===item.id?{...p,...data}:p));remember(data);return true}return queue(()=>api.updateItem(workspaceID,listID,item.id,data))}
- function toggle(item) {if(DEMO){updateDemo(items=>items.map(p=>p.id===item.id?{...p,checked:!p.checked}:p));return true}return queue(()=>api.toggleItem(workspaceID,listID,item.id,!item.checked))}
- function removeItem(item) {if(DEMO){updateDemo(items=>items.filter(p=>p.id!==item.id));setDialog(null);return}if(queue(()=>api.deleteItem(workspaceID,listID,item.id)))setDialog(null)}
+ function editItem(item,data) {
+  if(DEMO){updateDemo(items=>items.map(p=>p.id===item.id?{...p,...data}:p));remember(data);shopping.patchOlderItem({...item,...data});return true}
+  let operation;const accepted=queue(()=>operation=api.updateItem(workspaceID,listID,item.id,data));
+  if(accepted){shopping.patchOlderItem({...item,...data});Promise.resolve(operation).then(shopping.refreshHistory,shopping.refreshHistory)}
+  return accepted;
+ }
+ function toggle(item) {
+  const checked=!item.checked,next={...item,checked,checkedAt:checked?new Date():item.checkedAt};
+  if(DEMO){updateDemo(items=>items.map(p=>p.id===item.id?next:p));shopping.patchOlderItem(next);return true}
+  let operation;const accepted=queue(()=>operation=api.toggleItem(workspaceID,listID,item.id,checked));
+  if(accepted){shopping.markOptimistic(next);Promise.resolve(operation).then(shopping.refreshHistory,()=>{shopping.clearOptimistic(item.id);shopping.refreshHistory()})}
+  return accepted;
+ }
+ function removeItem(item) {
+  if(DEMO){updateDemo(items=>items.filter(p=>p.id!==item.id));shopping.dropOlderItem(item.id);setDialog(null);return}
+  let operation;if(queue(()=>operation=api.deleteItem(workspaceID,listID,item.id))){shopping.dropOlderItem(item.id);setDialog(null);Promise.resolve(operation).then(shopping.refreshHistory,shopping.refreshHistory)}
+ }
  function openInvite(input) {try{const url=new URL(input,location.origin);const token=url.pathname.match(/^\/join\/([^/]+)\/?$/)?.[1];if(url.origin!==location.origin||!TOKEN.test(token??''))throw new Error();try{localStorage.setItem('handla.pendingInvite',token)}catch{}setPendingToken(token);setInviteRetry(n=>n+1);setError('')}catch{setError('Klistra in en giltig inbjudningslänk till Handla.')}}
  async function copyInvite() {try{await navigator.clipboard.writeText(inviteLink);setInfo('Inbjudningslänken är kopierad.')}catch{setInfo('Markera och kopiera länken i fältet nedan.')}}
  const errorNotice=error&&<Notice error onClose={()=>setError('')}>{error}</Notice>;
@@ -180,14 +196,14 @@ function AppContent() {
   {screen==='lists'?<ListOverview lists={lists} previews={listPreviews} onSelect={id=>{setReveal(null);setSelected(id);setScreen('list')}} onCreate={()=>setDialog({type:'new-list'})} onBack={()=>setScreen('list')}/>:screen==='add'&&selectedList?<AddScreen key={listID} inputRef={addSearchInput} listName={selectedList.name} listCount={lists.length} memberCount={members.length} onLists={()=>setScreen('lists')} onMembers={()=>{setInfo('');setDialog({type:'workspace'})}} products={products} items={items} onAdd={addItem} onRestore={toggle} onAdded={revealItem} onBack={()=>setScreen('list')} error={error}/>:<main className="shopping-screen">
    <ShoppingHeader listName={selectedList?.name??'Inköpslista'} listCount={lists.length} memberCount={members.length} onLists={()=>setScreen('lists')} onMembers={()=>{setInfo('');setDialog({type:'workspace'})}} onOptions={()=>setDialog({type:'options'})} onAdd={selectedList?openAddScreen:null}/>
    <div className="messages">{errorNotice}{infoNotice}{!online&&<Notice>Du är offline. Håll appen öppen tills ändringarna har synkats.</Notice>}{pendingToken&&!invite&&<Notice>{inviteLoading?'Hämtar inbjudan…':'En inbjudan väntar.'}<button className="text-button" onClick={()=>setInviteRetry(n=>n+1)}>Öppna</button></Notice>}</div>
-   {!selectedList?<div className="empty-state"><p>Skapa er första inköpslista.</p><button className="primary button" onClick={()=>setDialog({type:'new-list'})}>Skapa lista</button></div>:<GroceryList key={listID} items={items} reveal={reveal?.listID===listID&&reveal?.workspaceID===workspaceID&&reveal?.userID===user?.uid?reveal:null} onRevealDone={finishReveal} loading={itemsLoading} onToggle={toggle} onEdit={item=>setDialog({type:'edit',item})}/>}
+   {!selectedList?<div className="empty-state"><p>Skapa er första inköpslista.</p><button className="primary button" onClick={()=>setDialog({type:'new-list'})}>Skapa lista</button></div>:<GroceryList key={listID} items={items} recentItems={shopping.recent.map(normalizeRow)} olderItems={shopping.older.map(normalizeRow)} history={shopping.history} onLoadOlder={shopping.loadOlder} reveal={reveal?.listID===listID&&reveal?.workspaceID===workspaceID&&reveal?.userID===user?.uid?reveal:null} onRevealDone={finishReveal} loading={itemsLoading} onToggle={toggle} onEdit={item=>setDialog({type:'edit',item})}/>}
    {(metadata.hasPendingWrites||!online)&&<div className="sync-status" role="status">{metadata.hasPendingWrites?'Ändringar väntar på synkning.':'Synkas när anslutningen är tillbaka.'}</div>}
   </main>}
   {inviteDialog}
   {!invite&&dialog?.type==='options'&&<Modal title="Alternativ" onClose={()=>setDialog(null)}><div className="options-actions">{selectedList&&<button onClick={()=>setDialog({type:'rename-list',list:selectedList})}><Icon name="edit"/>Byt namn</button>}<button onClick={()=>{setDialog(null);setScreen('lists')}}><Icon name="stack"/>Mina listor</button><button onClick={()=>setDialog({type:'new-list'})}><Icon name="plus"/>Ny inköpslista</button><button onClick={()=>setDialog({type:'workspace'})}><Icon name="people"/>Hushåll och inbjudningar</button></div></Modal>}
   {!invite&&dialog?.type==='rename-list'&&<Modal title="Byt namn på listan" onClose={()=>setDialog(null)}><RenameList list={dialog.list} onCancel={()=>setDialog(null)} onSave={name=>{if(renameList(dialog.list,name))setDialog(null)}}/></Modal>}
   {!invite&&dialog?.type==='new-list'&&<Modal title="Ny inköpslista" onClose={()=>setDialog(null)}><NewList onCreate={name=>{if(DEMO){const id=crypto.randomUUID();setLists(lists=>[...lists,{id,name}]);setDemoData(data=>({...data,[id]:[]}));setSelected(id);setDialog(null);setScreen('list');return}if(queue(()=>api.addList(workspaceID,name).then(id=>{setSelected(id);setScreen('list')})))setDialog(null)}}/></Modal>}
-  {!invite&&dialog?.type==='edit'&&<Modal title="Ändra vara" onClose={()=>setDialog(null)}><ItemEditor item={dialog.item} onSave={data=>{if(editItem(dialog.item,data))setDialog(null)}} onDelete={()=>removeItem(dialog.item)}/></Modal>}
+  {!invite&&dialog?.type==='edit'&&<Modal title="Ändra vara" onClose={()=>setDialog(null)}><ItemEditor item={items.find(item=>item.id===dialog.item.id)??dialog.item} onSave={data=>{if(editItem(dialog.item,data))setDialog(null)}} onDelete={()=>removeItem(dialog.item)}/></Modal>}
   {!invite&&dialog?.type==='workspace'&&<Modal title="Ert hushåll" onClose={()=>setDialog(null)} busy={busy}><div className="workspace-summary"><span className="workspace-icon"><Icon name="people" width="28" height="28"/></span><div><h3>{workspace?.name}</h3><p>{members.length} {members.length===1?'medlem':'medlemmar'} · gemensamma listor</p></div></div>{DEMO?<Notice>Det här är exempeldata. Inbjudningar fungerar i den riktiga appen.</Notice>:owner?<section className="invite-controls"><h3>Bjud in till hushållet</h3><p>Skicka en länk till de du vill handla tillsammans med. Länken gäller i sju dagar.</p>{inviteLink&&<><label className="field-label" htmlFor="invite-link">Inbjudningslänk</label><input id="invite-link" className="text-input link-input" value={inviteLink} readOnly onFocus={e=>e.target.select()}/><div className="button-row"><button className="secondary button" onClick={copyInvite}><Icon name="copy" width="17"/>Kopiera</button>{!!navigator.share&&<button className="primary button" onClick={async()=>{try{await navigator.share({title:'Handla tillsammans',text:'Gå med i vårt hushåll i Handla.',url:inviteLink})}catch(err){if(err.name!=='AbortError')report(err)}}}>Dela</button>}</div></>}<button className={`${inviteLink?'secondary':'primary'} button wide`} disabled={busy||!online} onClick={()=>run(async()=>setInviteLink(await api.createInvite(workspaceID)))}>{busy?'Arbetar…':inviteLink?'Skapa en ny länk':'Skapa inbjudningslänk'}</button><button className="text-button danger" disabled={busy||!online} onClick={()=>run(async()=>{await api.revokeInvite(workspaceID);setInviteLink('');setInfo('Inbjudningslänken är återkallad. Befintliga medlemmar påverkas inte.')})}>Återkalla tidigare inbjudningslänk</button><p className="small-note">Alla som har länken kan ansluta. En ny länk ersätter den gamla.</p></section>:<p>Be den som skapade hushållet att dela en inbjudningslänk för att bjuda in fler.</p>}{errorNotice}{infoNotice}<section className="install-box"><h3>Ha listan nära till hands</h3>{installEvent?<button className="secondary button" onClick={async()=>{await installEvent.prompt();setInstallEvent(null)}}>Lägg till på hemskärmen</button>:<p>På iPhone: öppna i Safari, tryck på Dela och välj <strong>Lägg till på hemskärmen</strong>.</p>}</section>{!DEMO&&<button className="text-button logout" disabled={busy} onClick={()=>run(async()=>{await api.signOut();setDialog(null);setInviteLink('')})}><Icon name="logout" width="17"/>Logga ut <span>{user.email}</span></button>}</Modal>}
  </div>;
 }
@@ -215,7 +231,7 @@ function RenameList({list,onSave,onCancel}) {
 function ShoppingHeader({listName,listCount,memberCount,onLists,onMembers,onOptions,onAdd,adding=false,inputRef,query,onQuery,onSubmit,onClose,catalogueOpen,onCatalogue}) {
  return <><header className="list-toolbar"><button className="list-count-button" aria-label={`Mina listor, ${listCount} listor`} onClick={onLists}><Icon name="stack" width="27" height="27"/><span>{listCount}</span></button><div className="toolbar-right"><button className="member-button" aria-label={`Hushållets medlemmar, ${memberCount}`} onClick={onMembers}><Icon name="people" width="25" height="25"/><span>{memberCount}</span></button>{adding?<button className="icon-button" aria-label="Stäng lägg till vara" onClick={onClose}><Icon name="close" width="25" height="25"/></button>:<button className="icon-button" aria-label="Fler alternativ" onClick={onOptions}><Icon name="more" width="27" height="27"/></button>}</div></header><div className="shopping-title"><h1>{listName}</h1>{adding?<div className="new-item-field editable"><Icon name="plus" width="22" height="22"/><input ref={inputRef} type="search" aria-label="Sök eller lägg till vara" placeholder="Ny vara" value={query} maxLength={120} onChange={event=>onQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&query.trim()){event.preventDefault();onSubmit()}}}/><button className={`input-catalogue ${catalogueOpen?'active':''}`} aria-label="Visa kategorier" aria-expanded={catalogueOpen} onClick={onCatalogue}><Icon name="catalogue" width="23" height="23"/></button></div>:onAdd&&<button className="new-item-field" onClick={onAdd}><Icon name="plus" width="22" height="22"/><span>Ny vara</span></button>}</div></>;
 }
-function GroceryList({items,reveal,onRevealDone,loading,onToggle,onEdit}) {
+function GroceryList({items,recentItems,olderItems,history,onLoadOlder,reveal,onRevealDone,loading,onToggle,onEdit}) {
  const rowElements=useRef(new Map());
  const [highlighted,setHighlighted]=useState(null);
  const targetID=reveal?items.find(item=>!item.checked&&normalize(item.name)===reveal.name)?.id:null;
@@ -229,11 +245,12 @@ function GroceryList({items,reveal,onRevealDone,loading,onToggle,onEdit}) {
   const timer=window.setTimeout(()=>{setHighlighted(null);onRevealDone(token)},1600);
   return()=>window.clearTimeout(timer);
  },[reveal?.token,targetID,loading]);
- const active=sortItems(items.filter(item=>!item.checked));const bought=sortItems(items.filter(item=>item.checked));
+ const active=sortItems(items.filter(item=>!item.checked));const bought=recentItems;
+ const datedOlder=olderItems.filter(item=>timestampMillis(item.checkedAt)!=null),unknownOlder=olderItems.filter(item=>timestampMillis(item.checkedAt)==null);
  if(loading)return <p className="list-loading" role="status">Hämtar listan…</p>;
- if(!items.length)return <div className="empty-state"><p>Listan är tom.</p><p className="muted">Lägg till det ni behöver med Ny vara.</p></div>;
+
  const row=item=><li className={`grocery-row ${item.checked?'checked':''} ${highlighted===item.id?'recently-added':''}`} key={item.id} ref={node=>{if(node)rowElements.current.set(item.id,node);else rowElements.current.delete(item.id)}} style={{'--category':categoryMap[item.category]?.color??categoryMap.other.color}}><button className="grocery-name" onClick={()=>onToggle(item)} aria-label={`${item.name}, ${item.checked?'köpt, lägg tillbaka':'bocka av'}, ${categoryMap[item.category]?.title??'Övrigt'}`}><span>{item.name}</span></button><button className="grocery-quantity" onClick={()=>onEdit(item)} aria-label={`Ändra ${item.name}, mängd ${item.quantity||'inte angiven'}`}>{item.quantity||<Icon name="edit" width="15" height="15"/>}</button></li>;
- return <div className="shopping-rows"><ul className="grocery-list active-items" aria-label="Varor att handla">{active.map(row)}</ul>{bought.length>0&&<><div className="list-breathing-space" aria-hidden="true"/><div className="bought-items"><ul className="grocery-list" aria-label="Köpta varor">{bought.map(row)}</ul></div></>}</div>
+ return <div className="shopping-rows"><ul className="grocery-list active-items" aria-label="Varor att handla">{active.map(row)}</ul>{!active.length&&<div className="empty-state"><p>Inga varor att handla.</p><p className="muted">Lägg till det ni behöver med Ny vara.</p></div>}<div className="list-breathing-space" aria-hidden="true"/><div className="bought-items">{bought.length>0&&<><p className="history-label">Senaste dygnet</p><ul className="grocery-list" aria-label="Köpta varor">{bought.map(row)}</ul></>}{history.expanded&&<>{datedOlder.length>0&&<><p className="history-label">Äldre inköp</p><ul className="grocery-list" aria-label="Äldre inköp">{datedOlder.map(row)}</ul></>}{unknownOlder.length>0&&<><p className="history-label">Datum saknas</p><ul className="grocery-list" aria-label="Inköp utan datum">{unknownOlder.map(row)}</ul></>}</>}<div className="history-controls">{history.error&&<Notice error>{history.error}</Notice>}{history.loading?<p role="status">Hämtar äldre inköp…</p>:history.error?<button className="text-button" onClick={onLoadOlder}>Försök igen</button>:!history.expanded||history.hasMore?<button className="text-button" onClick={onLoadOlder}>{history.expanded?'Visa fler äldre inköp':'Visa äldre inköp'}</button>:<p>{olderItems.length?'Inga fler äldre inköp.':'Inga äldre inköp.'}</p>}</div></div></div>
 }
 const listColors=['#0787a0','#b74080','#4d6bd8','#24855d','#ad6632','#8257aa'];
 function ListOverview({lists,previews,onSelect,onCreate,onBack}) {
@@ -276,4 +293,4 @@ function AddScreen({inputRef,listName,listCount,memberCount,onLists,onMembers,pr
   <h1 className="suggestions-heading">{catalogueOpen&&!query.trim()?'Alla varor':'Förslag'}</h1><div className="chip-groups">{groups.map(group=><section className="chip-group" key={group.category.id} aria-label={group.category.title}>{group.items.map(item=><button key={normalize(item.name)} className={`grocery-chip ${isAdded(item)?'added':''}`} style={{backgroundColor:chipColors[item.category]}} onClick={()=>add({...item,category:manual&&normalize(query)===normalize(item.name)?category:item.category})} aria-label={`${item.name}, ${isAdded(item)?'redan på listan':'lägg till'}, ${categoryMap[item.category].title}`} aria-pressed={isAdded(item)}>{item.name}{isAdded(item)&&<Icon name="check" width="14" height="14"/>}</button>)}</section>)}</div>{!groups.some(group=>group.items.length)&&<p className="no-suggestions">Ingen sparad vara matchar. Lägg till din egen vara ovan.</p>}</div>
  </main>
 }
-function ItemEditor({item,onSave,onDelete}) {const [name,setName]=useState(item.name);const [quantity,setQuantity]=useState(item.quantity??'');const [category,setCategory]=useState(item.category??'other');return <form onSubmit={e=>{e.preventDefault();if(name.trim())onSave({name:name.trim(),quantity:quantity.trim(),category})}}><label className="field-label" htmlFor="edit-name">Vara</label><input className="text-input" id="edit-name" value={name} onChange={e=>setName(e.target.value)} maxLength={120} required/><label className="field-label" htmlFor="edit-quantity">Mängd</label><input className="text-input" id="edit-quantity" value={quantity} onChange={e=>setQuantity(e.target.value)} placeholder="Till exempel 2 l eller 500 g" maxLength={80}/><label className="field-label" htmlFor="edit-category">Kategori</label><CategorySelect id="edit-category" value={category} onChange={setCategory}/><button className="primary button wide" disabled={!name.trim()}>Spara ändringar</button><button className="text-button danger wide" type="button" onClick={onDelete}><Icon name="trash" width="17"/>Ta bort varan</button></form>}
+function ItemEditor({item,onSave,onDelete}) {const [name,setName]=useState(item.name);const [quantity,setQuantity]=useState(item.quantity??'');const [category,setCategory]=useState(item.category??'other');return <form onSubmit={e=>{e.preventDefault();if(name.trim())onSave({name:name.trim(),quantity:quantity.trim(),category})}}><label className="field-label" htmlFor="edit-name">Vara</label><input className="text-input" id="edit-name" value={name} onChange={e=>setName(e.target.value)} maxLength={120} required/><label className="field-label" htmlFor="edit-quantity">Mängd</label><input className="text-input" id="edit-quantity" value={quantity} onChange={e=>setQuantity(e.target.value)} placeholder="Till exempel 2 l eller 500 g" maxLength={80}/><label className="field-label" htmlFor="edit-category">Kategori</label><CategorySelect id="edit-category" value={category} onChange={setCategory}/><dl className="item-dates"><div><dt>Tillagd</dt><dd>{formatItemDate(item.createdAt)}</dd></div><div><dt>Senast avbockad</dt><dd>{formatItemDate(item.checkedAt)}</dd></div></dl>{item._pending&&<p className="small-note">Tidpunkten bekräftas när ändringen har synkats.</p>}<button className="primary button wide" disabled={!name.trim()}>Spara ändringar</button><button className="text-button danger wide" type="button" onClick={onDelete}><Icon name="trash" width="17"/>Ta bort varan</button></form>}

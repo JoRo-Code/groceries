@@ -1,0 +1,31 @@
+import {chromium,expect} from '/Users/joro/src/smile/node_modules/@playwright/test/index.mjs';
+const base=process.env.HANDLA_QA_URL||'http://localhost:5173';
+const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+const results=[];
+try {
+ const page=await browser.newPage({viewport:{width:390,height:844},reducedMotion:'reduce'});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.clock.install({time:new Date('2026-11-08T12:00:00Z')});
+ await page.goto(`${base}/?demo=1&history=1`);
+ const active=page.getByRole('list',{name:'Varor att handla',exact:true});
+ const recent=page.getByRole('list',{name:'Köpta varor',exact:true});
+ const older=page.getByRole('list',{name:'Äldre inköp',exact:true});
+ const unknown=page.getByRole('list',{name:'Inköp utan datum',exact:true});
+ await expect(active.locator('li')).toHaveCount(6);await expect(recent.locator('li')).toHaveCount(2);await expect(older).toHaveCount(0);await expect(unknown).toHaveCount(0);results.push('default active+recent only');
+ await page.getByRole('button',{name:'Visa äldre inköp',exact:true}).click();await expect(older.locator('li')).toHaveCount(20);
+ await page.getByRole('button',{name:'Visa fler äldre inköp',exact:true}).click();await expect(older.locator('li')).toHaveCount(40);
+ await page.getByRole('button',{name:'Visa fler äldre inköp',exact:true}).click();await expect(older.locator('li')).toHaveCount(43);await expect(unknown.locator('li')).toHaveCount(2);await expect(page.getByText('Inga fler äldre inköp.',{exact:true})).toBeVisible();results.push('20+20+5 pages known before unknown with end state');
+ await page.getByRole('button',{name:'Ändra Äldre vara 02, mängd 1 st',exact:true}).click();
+ const before=await page.locator('.item-dates').innerText();
+ await page.locator('#edit-quantity').fill('2 st');await page.locator('#edit-category').selectOption('pantry');await page.getByRole('button',{name:'Spara ändringar',exact:true}).click();
+ await page.getByRole('button',{name:'Ändra Äldre vara 02, mängd 2 st',exact:true}).click();expect(await page.locator('.item-dates').innerText()).toBe(before);await page.getByRole('button',{name:'Stäng',exact:true}).click();results.push('editing old quantity/category preserves dates');
+ await page.getByRole('button',{name:'Ändra Odaterad vara 1, mängd inte angiven',exact:true}).click();await expect(page.getByRole('dialog').getByText('Datum saknas',{exact:true})).toHaveCount(2);await page.getByRole('button',{name:'Stäng',exact:true}).click();results.push('missing dates shown honestly');
+ await page.getByRole('button',{name:'Äldre vara 01, köpt, lägg tillbaka, Övrigt',exact:true}).click();await expect(active.locator('li')).toHaveCount(7);await expect(older.locator('li')).toHaveCount(42);
+ await page.getByRole('button',{name:'Ändra Äldre vara 01, mängd 1 st',exact:true}).click();const restoredDate=await page.locator('.item-dates dd').nth(1).innerText();expect(restoredDate).not.toBe('Datum saknas');await page.getByRole('button',{name:'Stäng',exact:true}).click();results.push('restore removes old row and retains latest date');
+ await page.getByRole('button',{name:'Mina listor, 2 listor',exact:true}).click();await page.getByRole('navigation',{name:'Inköpslistor',exact:true}).getByRole('button',{name:/^Till helgen/}).click();await expect(older).toHaveCount(0);await expect(unknown).toHaveCount(0);
+ await page.getByRole('button',{name:'Mina listor, 2 listor',exact:true}).click();await page.getByRole('navigation',{name:'Inköpslistor',exact:true}).getByRole('button',{name:/^Veckohandling/}).click();await expect(older).toHaveCount(0);results.push('list switch resets loaded pages');
+ await page.getByRole('button',{name:'Visa äldre inköp',exact:true}).click();await expect(older.locator('li')).toHaveCount(20);
+ await page.clock.fastForward(23*60*60*1000);await expect(recent.locator('li')).toHaveCount(2);await expect(older.locator('li')).toHaveCount(20);results.push('expanded cutoff frozen while reading');
+ await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));await expect(recent).toHaveCount(0);await expect(older.locator('li')).toHaveCount(20);results.push('foreground refresh advances day cutoff');
+ expect(errors).toEqual([]);console.log(JSON.stringify({status:'passed',results,productionWrites:false}));
+} finally {await browser.close()}

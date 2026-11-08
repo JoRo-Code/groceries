@@ -1,0 +1,37 @@
+import {chromium,expect} from '/Users/joro/src/smile/node_modules/@playwright/test/index.mjs';
+import {createBackend} from '../../web/src/backend.js';
+import {createRequire} from 'node:module';
+const require=createRequire(new URL('../../web/package.json',import.meta.url));
+const {terminate}=require('firebase/firestore');const {deleteApp}=require('firebase/app');
+const service=createBackend({projectId:'demo-handla'},{appName:`history-browser-${crypto.randomUUID()}`,emulators:true});
+const email=`history-browser-${crypto.randomUUID()}@example.test`,password='TestPassword123!';
+const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+const checks=[];const errors=[];
+try{
+ await service.signUp(email,password);const w=await service.createWorkspace('History browser QA'),l=await service.addList(w,'Historik QA');await service.addList(w,'Andra listan');
+ const root='http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents';
+ const prefix=`workspaces/${w}/lists/${l}/items`,old=new Date(Date.now()-3*86400000).toISOString(),recent=new Date().toISOString();
+ const headers={Authorization:'Bearer owner','Content-Type':'application/json'};
+ const writes=Array.from({length:49},(_,i)=>({update:{name:`projects/demo-handla/databases/(default)/documents/${prefix}/seed-${String(i).padStart(3,'0')}`,fields:{name:{stringValue:i===48?'Aktiv vara':i===47?'Nyligen köpt':i<25?`Äldre ${String(i).padStart(2,'0')}`:`Okänd ${i}`},quantity:{stringValue:'2'},category:{stringValue:'other'},checked:{booleanValue:i!==48},createdAt:{timestampValue:old},checkedAt:i<25?{timestampValue:old}:i<47||i===48?{nullValue:null}:{timestampValue:recent}}}}));
+ expect((await fetch(`${root}:commit`,{method:'POST',headers,body:JSON.stringify({writes})})).status).toBe(200);
+ const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(process.env.HANDLA_QA_URL||'http://localhost:5174');await page.getByRole('button',{name:'Fortsätt med e-post',exact:true}).click();await page.getByLabel('E-postadress',{exact:true}).fill(email);await page.getByLabel('Lösenord',{exact:true}).fill(password);await page.getByRole('button',{name:'Logga in',exact:true}).click();
+ await page.getByRole('button',{name:/^Mina listor,/}).click();await page.getByRole('navigation',{name:'Inköpslistor'}).getByRole('button',{name:/^Historik QA/}).click();
+ await expect(page.getByRole('list',{name:'Varor att handla',exact:true}).locator('li')).toHaveCount(1);await expect(page.getByRole('list',{name:'Köpta varor',exact:true}).locator('li')).toHaveCount(1);await expect(page.getByRole('list',{name:'Äldre inköp',exact:true})).toHaveCount(0);checks.push('default shows active and last24h only');
+ await page.screenshot({path:'qa/browser/history-recent-mobile.png',fullPage:true});
+ await page.context().setOffline(true);
+ await page.getByRole('button',{name:'Visa äldre inköp',exact:true}).click();
+ await expect(page.getByText('Historiken kunde inte hämtas. Kontrollera anslutningen och försök igen.',{exact:true})).toBeVisible({timeout:25000});
+ await expect(page.getByRole('button',{name:'Försök igen',exact:true})).toBeVisible();
+ await page.context().setOffline(false);checks.push('offline history failure stays explicit and reconnect retries');
+ await expect(page.getByRole('list',{name:'Äldre inköp',exact:true}).locator('li')).toHaveCount(20);
+ await page.getByRole('button',{name:'Visa fler äldre inköp',exact:true}).click();await expect(page.getByRole('list',{name:'Äldre inköp',exact:true}).locator('li')).toHaveCount(25);await expect(page.getByRole('list',{name:'Inköp utan datum',exact:true}).locator('li')).toHaveCount(15);
+ await page.getByRole('button',{name:'Visa fler äldre inköp',exact:true}).click();await expect(page.getByRole('list',{name:'Inköp utan datum',exact:true}).locator('li')).toHaveCount(22);await expect(page.getByText('Inga fler äldre inköp.',{exact:true})).toBeVisible();checks.push('47 older rows pages20/20/7 with dated then unknown and no duplicates');
+ await page.getByRole('button',{name:'Ändra Okänd 25, mängd 2',exact:true}).click();await expect(page.locator('.item-dates')).toContainText('Datum saknas');await expect(page.locator('.item-dates')).toContainText('Tillagd');await page.screenshot({path:'qa/browser/history-details-mobile.png'});await page.getByRole('button',{name:'Stäng',exact:true}).click();
+ await page.getByRole('button',{name:'Ändra Äldre 24, mängd 2',exact:true}).click();const dates=await page.locator('.item-dates').innerText();await page.locator('#edit-quantity').fill('3');await page.getByRole('button',{name:'Spara ändringar',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Ändra Äldre 24, mängd 3',exact:true})).toBeVisible();await page.getByRole('button',{name:'Äldre 24, köpt, lägg tillbaka, Övrigt',exact:true}).click();await expect(page.getByRole('list',{name:'Varor att handla',exact:true}).getByRole('button',{name:'Äldre 24, bocka av, Övrigt',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Ändra Äldre 24, mängd 3',exact:true}).click();expect(await page.locator('.item-dates').innerText()).toBe(dates);await page.getByRole('button',{name:'Stäng',exact:true}).click();checks.push('editing and restoring preserve both dates and remove older checked row');
+ await page.getByRole('button',{name:'Äldre 24, bocka av, Övrigt',exact:true}).click();await expect(page.getByRole('list',{name:'Köpta varor',exact:true}).getByRole('button',{name:'Äldre 24, köpt, lägg tillbaka, Övrigt',exact:true})).toBeVisible();checks.push('recheck moves to recent purchases');
+ await page.getByRole('button',{name:/^Mina listor,/}).click();await page.getByRole('navigation',{name:'Inköpslistor'}).getByRole('button',{name:/^Andra listan/}).click();await expect(page.locator('.grocery-row')).toHaveCount(0);await expect(page.getByText('Nyligen köpt',{exact:true})).toHaveCount(0);checks.push('list switch clears prior live and paged rows');expect(errors).toEqual([]);
+ console.log(JSON.stringify({status:'passed',checks,productionWrites:false}));
+}finally{await browser.close();await terminate(service.db);await deleteApp(service.app)}

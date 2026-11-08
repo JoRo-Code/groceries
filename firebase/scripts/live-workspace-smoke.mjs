@@ -25,15 +25,23 @@ try {
  const itemID=await owner.addItem(workspaceID,listID,{name:'Mjölk',quantity:'2 l',category:'dairy'});
  const observe=(next,error)=>guest.watchItems(workspaceID,listID,next,error);
  await watchUntil(observe,items=>items.some(i=>i.id===itemID&&i.quantity==='2 l'));
+ const created=await watchUntil(observe,items=>items.some(i=>i.id===itemID&&i.createdAt));
+ const createdMillis=created.find(i=>i.id===itemID).createdAt.toMillis();
  await guest.toggleItem(workspaceID,listID,itemID,true);
+ const recent=await watchUntil((next,error)=>owner.watchRecentItems(workspaceID,listID,new Date(Date.now()-86400000),next,error),items=>items.some(i=>i.id===itemID&&i.checkedAt));
+ const checkedMillis=recent.find(i=>i.id===itemID).checkedAt.toMillis();
+ const older=await owner.listOlderItems(workspaceID,listID,new Date(Date.now()-86400000));
+ if(older.items.length||older.hasMore)throw Error('Unexpected synthetic history');
  await owner.updateItem(workspaceID,listID,itemID,{name:'Mjölk',quantity:'3 l',category:'dairy'});
  await watchUntil(observe,items=>items.some(i=>i.id===itemID&&i.checked&&i.quantity==='3 l'));
  await guest.toggleItem(workspaceID,listID,itemID,false);
- await watchUntil(observe,items=>items.some(i=>i.id===itemID&&!i.checked));
+ const restored=await watchUntil((next,error)=>owner.watchActiveItems(workspaceID,listID,next,error),items=>items.some(i=>i.id===itemID&&!i.checked));
+ const dates=restored.find(i=>i.id===itemID);
+ if(dates.createdAt.toMillis()!==createdMillis||dates.checkedAt.toMillis()!==checkedMillis)throw Error('Date preservation failed');
  await owner.revokeInvite(workspaceID);
  let rejected=false;try{await guest.getInvite(token);}catch{rejected=true;}
  if(!rejected)throw new Error('Revoked invite remained readable');
- console.log(JSON.stringify({project:'groceries-ros',liveSharedWorkspace:true,inviteJoin:true,realtimeSync:true,editPreservesChecked:true,restore:true,revoke:true}));
+ console.log(JSON.stringify({project:'groceries-ros',liveSharedWorkspace:true,inviteJoin:true,realtimeSync:true,editPreservesChecked:true,restore:true,revoke:true,datePreservation:true,historyQueries:true}));
 } catch(error) {failure=error;console.error(error.message);}
 finally {
  waits.forEach(stop=>stop());

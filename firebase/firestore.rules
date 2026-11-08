@@ -57,13 +57,24 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['name']) && text(request.resource.data.name, 80);
         match /items/{item} {
           allow read, delete: if member(w);
-          allow create, update: if member(w)
+          function validItem() { return member(w)
             && exists(/databases/$(database)/documents/workspaces/$(w)/lists/$(list))
-            && request.resource.data.keys().hasOnly(['name', 'quantity', 'checked', 'category'])
+            && request.resource.data.keys().hasOnly(['name', 'quantity', 'checked', 'category', 'createdAt', 'checkedAt'])
+            && (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp)
+            && (!('checkedAt' in request.resource.data) || request.resource.data.checkedAt == null || request.resource.data.checkedAt is timestamp)
             && validCategory(request.resource.data)
             && text(request.resource.data.name, 120)
             && request.resource.data.quantity is string && request.resource.data.quantity.size() <= 80
-            && request.resource.data.checked is bool;
+            && request.resource.data.checked is bool; }
+          allow create: if validItem()
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.checked == false && request.resource.data.checkedAt == null;
+          allow update: if validItem()
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdAt'])
+            && ((request.resource.data.checked == true && resource.data.checked == false
+                 && request.resource.data.checkedAt == request.time)
+              || (!(request.resource.data.checked == true && resource.data.checked == false)
+                 && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['checkedAt'])));
         }
       }
       match /products/{product} {
