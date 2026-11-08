@@ -1,3 +1,4 @@
+import { invitationOrigin } from './inviteLinks.js';
 import { initializeApp } from 'firebase/app';
 import {
   getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -49,7 +50,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
     connectFirestoreEmulator(db, '127.0.0.1', 8185);
   }
-  const origin = inviteOrigin || (emulators && typeof location !== 'undefined' ? location.origin : `https://${config.projectId}.web.app`);
+  const origin = inviteOrigin || (emulators && typeof location !== 'undefined' ? location.origin : invitationOrigin(config.projectId, typeof location !== 'undefined' ? location.origin : undefined));
   let pendingWrites = 0;
   const queued = operation => {
     pendingWrites += 1;

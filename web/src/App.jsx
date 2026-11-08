@@ -1,6 +1,7 @@
 import React, {useEffect, useId, useMemo, useRef, useState} from 'react';
 import {flushSync} from 'react-dom';
 import * as api from './backend.js';
+import {invitationToken} from './inviteLinks.js';
 import {useShoppingHistory} from './useShoppingHistory.js';
 import {DAY_MS,timestampMillis,formatItemDate} from './history.js';
 import {categories, categoryMap, categoryFor, normalize, suggest, sortItems, mergeCatalogue, defaultHints} from './catalogue.js';
@@ -184,7 +185,7 @@ function AppContent() {
   if(DEMO){updateDemo(items=>items.filter(p=>p.id!==item.id));shopping.dropOlderItem(item.id);setDialog(null);return}
   let operation;if(queue(()=>operation=api.deleteItem(workspaceID,listID,item.id))){shopping.dropOlderItem(item.id);setDialog(null);Promise.resolve(operation).then(shopping.refreshHistory,shopping.refreshHistory)}
  }
- function openInvite(input) {try{const url=new URL(input,location.origin);const token=url.pathname.match(/^\/join\/([^/]+)\/?$/)?.[1];if(url.origin!==location.origin||!TOKEN.test(token??''))throw new Error();try{localStorage.setItem('handla.pendingInvite',token)}catch{}setPendingToken(token);setInviteRetry(n=>n+1);setError('')}catch{setError('Klistra in en giltig inbjudningslänk till Handla.')}}
+ function openInvite(input) {try{const token=invitationToken(input,location.origin);try{localStorage.setItem('handla.pendingInvite',token)}catch{}setPendingToken(token);setInviteRetry(n=>n+1);setError('')}catch{setError('Klistra in en giltig inbjudningslänk till Handla.')}}
  async function copyInvite() {try{await navigator.clipboard.writeText(inviteLink);setInfo('Inbjudningslänken är kopierad.')}catch{setInfo('Markera och kopiera länken i fältet nedan.')}}
  const errorNotice=error&&<Notice error onClose={()=>setError('')}>{error}</Notice>;
  const infoNotice=info&&<Notice onClose={()=>setInfo('')}>{info}</Notice>;

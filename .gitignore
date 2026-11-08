@@ -33,3 +33,6 @@ qa/browser/*failure*.png
 
 # Temporary explicit Hosting release config
 firebase/firebase.app-only.generated.json
+
+# Staged static Palisty landing release
+firebase/landing-dist/
