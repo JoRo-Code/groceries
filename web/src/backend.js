@@ -38,7 +38,7 @@ const displayName = name => {
 };
 
 /** One factory also allows isolated clients in emulator acceptance tests. No admin credentials. */
-export function createBackend(config, { appName, emulators = false, inviteOrigin } = {}) {
+export function createBackend(config, { appName, emulators = false, inviteOrigin, pushDataEnabled = false } = {}) {
   if (emulators) config = { ...config, projectId: 'demo-handla', apiKey: 'demo-api-key', appId: '1:1234567890:web:demo' };
   const app = initializeApp(config, appName);
   const auth = getAuth(app);
@@ -62,6 +62,8 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
   const workspace = id => doc(db, 'workspaces', id);
   const list = (w, l) => doc(db, 'workspaces', w, 'lists', l);
   const item = (w, l, i) => doc(db, 'workspaces', w, 'lists', l, 'items', i);
+  const actorFields = () => pushDataEnabled ? {lastActorUID:uid(),lastActionAt:serverTimestamp()} : {};
+  const purgeDocuments = async source => {for(;;){const rows=await getDocsFromServer(query(source,limit(200)));if(rows.empty)return;const batch=writeBatch(db);rows.docs.forEach(row=>batch.delete(row.ref));await batch.commit()}};
   const metadata = snapshot => ({ fromCache: snapshot.metadata.fromCache, hasPendingWrites: snapshot.metadata.hasPendingWrites });
   const watchDoc = (ref, callback, error) => onSnapshot(ref, { includeMetadataChanges: true }, snapshot => {
     // Missing cache data is not proof of a new account/workspace.
@@ -186,10 +188,20 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       const userID=uid();
       return queued((async()=>{
         const profileRef=doc(db,'users',userID),profile=await getDocFromServer(profileRef);
-        if(!profile.exists())return;
+        if(!profile.exists()){if(pushDataEnabled)await purgeDocuments(collection(profileRef,'devices'));return;}
         const w=profile.data().workspaceID;
         if(w!==plan?.workspaceID)throw new Error('Hushållet har ändrats. Bekräfta raderingen igen.');
         const spaceRef=workspace(w),ownMember=doc(spaceRef,'members',userID);
+        if(pushDataEnabled){
+          await updateDoc(profileRef,{deletingAccount:true});
+          await purgeDocuments(collection(profileRef,'devices'));
+          let cursor=null;
+          for(;;){
+            const rows=await getDocsFromServer(query(collection(spaceRef,'lists'),orderBy(documentId()),...(cursor?[startAfter(cursor)]:[]),limit(100)));
+            for(const listRow of rows.docs){for(;;){const authored=await getDocsFromServer(query(collection(listRow.ref,'items'),where('lastActorUID','==',userID),limit(200)));if(authored.empty)break;const batch=writeBatch(db);authored.docs.forEach(row=>batch.update(row.ref,{lastActorUID:deleteField(),lastActionAt:deleteField()}));await batch.commit()}}
+            if(rows.size<100)break;cursor=rows.docs.at(-1);
+          }
+        }
         const isOwner=await runTransaction(db,async transaction=>{
           const [space,currentProfile]=await Promise.all([transaction.get(spaceRef),transaction.get(profileRef)]);
           if(!space.exists()||currentProfile.data()?.workspaceID!==w)throw new Error('Hushållet har ändrats.');
@@ -202,7 +214,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
         const others=await getDocsFromServer(query(collection(spaceRef,'members'),where(documentId(),'!=',userID),orderBy(documentId()),limit(1)));
         const recipient=others.docs[0];
         if((recipient?.id??null)!==(plan.recipient?.id??null)){
-          await updateDoc(spaceRef,{deletingBy:deleteField()});
+          const unlock=writeBatch(db);unlock.update(spaceRef,{deletingBy:deleteField()});if(pushDataEnabled)unlock.update(profileRef,{deletingAccount:deleteField()});await unlock.commit();
           throw new Error('Medlemmarna har ändrats. Bekräfta mottagaren igen. Inga listor har raderats.');
         }
         if(recipient){
@@ -290,7 +302,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
       return queued((async () => {
         const key = await productID(values.name);
         const ref = doc(collection(list(workspaceID, listID), 'items')), batch = writeBatch(db);
-        batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null });
+        batch.set(ref, { ...values, checked: false, createdAt: serverTimestamp(), checkedAt: null, ...actorFields() });
         batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});
         batch.set(doc(workspace(workspaceID), 'products', key), { name: values.name, category: values.category });
         await batch.commit(); return ref.id;
@@ -309,7 +321,7 @@ export function createBackend(config, { appName, emulators = false, inviteOrigin
     },
     toggleItem(workspaceID, listID, itemID, checked) {
       uid(); if (typeof checked !== 'boolean') throw new Error('Ogiltig avbockning.');
-      const batch=writeBatch(db);batch.update(item(workspaceID,listID,itemID),{checked,...(checked?{checkedAt:serverTimestamp()}:{})});batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
+      const batch=writeBatch(db);batch.update(item(workspaceID,listID,itemID),{checked,...(checked?{checkedAt:serverTimestamp()}:{}),...actorFields()});batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
     },
     deleteItem(workspaceID, listID, itemID) {
       uid();const batch=writeBatch(db);batch.delete(item(workspaceID,listID,itemID));batch.update(list(workspaceID,listID),{lastChangedAt:serverTimestamp()});return queued(batch.commit());
@@ -321,7 +333,7 @@ const env = import.meta.env || {};
 let config;
 try { config = JSON.parse(env.VITE_FIREBASE_CONFIG || '{}'); } catch { config = {}; }
 export const configured = Boolean(config.apiKey && config.projectId && config.appId);
-const backend = configured ? createBackend(config, { emulators: env.VITE_USE_EMULATORS === 'true' }) : null;
+const backend = configured ? createBackend(config, { emulators: env.VITE_USE_EMULATORS === 'true', pushDataEnabled:env.VITE_PUSH_DATA_ENABLED === 'true' }) : null;
 const call = name => (...args) => {
   if (!backend) throw new Error('Firebase-konfiguration saknas.');
   return backend[name](...args);

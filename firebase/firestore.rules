@@ -11,7 +11,8 @@ service cloud.firestore {
       && request.time.toMillis() - request.auth.token.get('auth_time', 0) * 1000 >= 0
       && request.time.toMillis() - request.auth.token.get('auth_time', 0) * 1000 < 300000; }
     function unlocked(w) { return !('deletingBy' in get(workspacePath(w)).data); }
-    function canWrite(w) { return member(w) && unlocked(w); }
+    function accountActive() { return signedIn() && (!exists(userPath()) || get(userPath()).data.get('deletingAccount', false) != true); }
+    function canWrite(w) { return member(w) && unlocked(w) && accountActive(); }
     function purging(w) { return owner(w) && recentLogin() && get(workspacePath(w)).data.get('deletingBy', '') == request.auth.uid; }
     function text(value, max) { return value is string && value.size() > 0 && value.size() <= max; }
     // Old documents have no category; explicit values must use stable catalogue IDs.
@@ -30,11 +31,21 @@ service cloud.firestore {
     }
     match /users/{uid} {
       allow get: if signedIn() && uid == request.auth.uid;
-      allow update: if signedIn() && uid == request.auth.uid
+      allow update: if signedIn() && uid == request.auth.uid && ((accountActive()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastViewedListID'])
         && request.resource.data.lastViewedListID is string
         && member(resource.data.workspaceID)
-        && existsAfter(/databases/$(database)/documents/workspaces/$(resource.data.workspaceID)/lists/$(request.resource.data.lastViewedListID));
+        && existsAfter(/databases/$(database)/documents/workspaces/$(resource.data.workspaceID)/lists/$(request.resource.data.lastViewedListID)))
+        || (recentLogin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletingAccount'])
+          && (!('deletingAccount' in request.resource.data) || request.resource.data.deletingAccount == true)));
+      match /devices/{installation} {
+        allow read, delete: if signedIn() && uid == request.auth.uid;
+        allow create, update: if signedIn() && uid == request.auth.uid && accountActive()
+          && installation.size() >= 10 && installation.size() <= 128
+          && request.resource.data.keys().hasOnly(['token','platform','updatedAt'])
+          && text(request.resource.data.token,4096) && request.resource.data.token.size() >= 20
+          && request.resource.data.platform == 'ios' && request.resource.data.updatedAt == request.time;
+      }
       allow delete: if signedIn() && uid == request.auth.uid && recentLogin()
         && !existsAfter(memberPath(resource.data.workspaceID));
       allow create: if signedIn() && uid == request.auth.uid
@@ -53,7 +64,7 @@ service cloud.firestore {
         && getAfter(userPath()).data.workspaceID == w
         && getAfter(memberPath(w)).data.role == 'owner';
       allow update: if owner(w) && (
-        (unlocked(w) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteToken']))
+        (unlocked(w) && accountActive() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteToken']))
         || (recentLogin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletingBy','inviteToken'])
           && request.resource.data.get('deletingBy','') == request.auth.uid && !('inviteToken' in request.resource.data))
         || (purging(w) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletingBy'])
@@ -90,7 +101,7 @@ service cloud.firestore {
       }
       match /lists/{list} {
         allow read: if member(w);
-        allow create: if signedIn() && existsAfter(memberPath(w))
+        allow create: if signedIn() && accountActive() && existsAfter(memberPath(w))
           && (!exists(workspacePath(w)) || unlocked(w))
           && request.resource.data.keys().hasOnly(['name','lastChangedAt']) && text(request.resource.data.name, 80)
           && (!('lastChangedAt' in request.resource.data) || request.resource.data.lastChangedAt == request.time);
@@ -103,22 +114,28 @@ service cloud.firestore {
           allow delete: if canWrite(w) || purging(w);
           function validItem() { return canWrite(w)
             && exists(/databases/$(database)/documents/workspaces/$(w)/lists/$(list))
-            && request.resource.data.keys().hasOnly(['name', 'quantity', 'checked', 'category', 'createdAt', 'checkedAt'])
+            && request.resource.data.keys().hasOnly(['name', 'quantity', 'checked', 'category', 'createdAt', 'checkedAt', 'lastActorUID', 'lastActionAt'])
             && (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp)
             && (!('checkedAt' in request.resource.data) || request.resource.data.checkedAt == null || request.resource.data.checkedAt is timestamp)
             && validCategory(request.resource.data)
             && text(request.resource.data.name, 120)
             && request.resource.data.quantity is string && request.resource.data.quantity.size() <= 80
             && request.resource.data.checked is bool; }
-          allow create: if validItem()
+          function validActor() { return (!('lastActorUID' in request.resource.data) && !('lastActionAt' in request.resource.data))
+            || (request.resource.data.lastActorUID == request.auth.uid && request.resource.data.lastActionAt == request.time); }
+          allow create: if validItem() && validActor()
             && request.resource.data.createdAt == request.time
             && request.resource.data.checked == false && request.resource.data.checkedAt == null;
-          allow update: if validItem()
+          allow update: if (validItem()
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastActorUID','lastActionAt']) || (request.resource.data.lastActorUID == request.auth.uid && request.resource.data.lastActionAt == request.time))
             && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdAt'])
             && ((request.resource.data.checked == true && resource.data.checked == false
                  && request.resource.data.checkedAt == request.time)
               || (!(request.resource.data.checked == true && resource.data.checked == false)
-                 && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['checkedAt'])));
+                 && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['checkedAt']))))
+            || (member(w) && recentLogin() && resource.data.get('lastActorUID','') == request.auth.uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActorUID','lastActionAt'])
+              && !('lastActorUID' in request.resource.data) && !('lastActionAt' in request.resource.data));
         }
       }
       match /products/{product} {
@@ -132,7 +149,7 @@ service cloud.firestore {
     match /invites/{token} {
       allow get: if signedIn() && resource.data.expiresAt > request.time
         && get(workspacePath(resource.data.workspaceID)).data.inviteToken == token;
-      allow create: if signedIn() && owner(request.resource.data.workspaceID) && unlocked(request.resource.data.workspaceID)
+      allow create: if signedIn() && owner(request.resource.data.workspaceID) && accountActive() && unlocked(request.resource.data.workspaceID)
         && token.matches('^[a-f0-9-]{72}$')
         && request.resource.data.keys().hasOnly(['workspaceID', 'name', 'expiresAt'])
         && request.resource.data.name == get(workspacePath(request.resource.data.workspaceID)).data.name

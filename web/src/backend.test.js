@@ -144,3 +144,18 @@ test('list ordering preserves legacy lists and sorts shared recent activity befo
  const lists=[{id:'z',name:'Zebra'},{id:'a',name:'Apelsin'},{id:'fresh',name:'Ny',lastChangedAt:new Date(2000)},{id:'old',name:'Gammal',lastChangedAt:new Date(1000)}];
  assert.deepEqual(sortLists(lists).map(l=>l.id),['fresh','old','a','z']);assert.equal(lists[0].id,'z');
 });
+
+test('push-enabled shared deletion removes devices and actor references while preserving grocery data', {skip:process.env.HANDLA_EMULATOR_TESTS!=='true'},async()=>{
+ const clients=['owner','guest'].map(role=>createBackend({projectId:'demo-handla'},{appName:`push-${role}-${crypto.randomUUID()}`,emulators:true,pushDataEnabled:true}));const [owner,guest]=clients;
+ try{
+  for(const client of clients)await client.signUp(`push-${crypto.randomUUID()}@example.test`,'TestPassword123!');
+  const w=await owner.createWorkspace('Push QA'),l=await owner.addList(w,'Shared');await guest.joinWorkspace((await owner.createInvite(w)).split('/').at(-1));
+  const id=await guest.addItem(w,l,{name:'Bevarad vara',category:'other'}),ref=doc(owner.db,'workspaces',w,'lists',l,'items',id);
+  let item=(await getDoc(ref)).data();assert.equal(item.lastActorUID,guest.auth.currentUser.uid);
+  await guest.toggleItem(w,l,id,true);item=(await getDoc(ref)).data();assert.equal(item.lastActorUID,guest.auth.currentUser.uid);assert.equal(item.checked,true);
+  const {setDoc,serverTimestamp}=await import('firebase/firestore');await setDoc(doc(guest.db,'users',guest.auth.currentUser.uid,'devices','install-123456789'),{token:'synthetic-token-no-real-notifications',platform:'ios',updatedAt:serverTimestamp()});
+  const uid=guest.auth.currentUser.uid;await guest.deleteAccountData(await guest.prepareAccountDeletion());
+  item=(await getDoc(ref)).data();assert.equal(item.name,'Bevarad vara');assert.equal(item.checked,true);assert.equal(item.lastActorUID,undefined);assert.equal(item.lastActionAt,undefined);
+  const remaining=await(await fetch(`http://127.0.0.1:8185/v1/projects/demo-handla/databases/(default)/documents/users/${uid}/devices`,{headers:{Authorization:'Bearer owner'}})).json();assert.equal(remaining.documents?.length??0,0);
+ }finally{await Promise.all(clients.map(c=>terminate(c.db)));await Promise.all(clients.map(c=>deleteApp(c.app)))}
+});

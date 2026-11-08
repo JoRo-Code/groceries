@@ -1,0 +1,31 @@
+import fs from 'node:fs';
+import {chromium,expect} from '/Users/joro/src/smile/node_modules/@playwright/test/index.mjs';
+import {createBackend} from '../../web/src/backend.js';
+import {getDoc,getDocs,collection,doc,terminate} from '../../web/node_modules/firebase/firestore/dist/index.mjs';
+import {deleteApp} from '../../web/node_modules/firebase/app/dist/index.mjs';
+const credentials=JSON.parse(fs.readFileSync('/tmp/handla-app-review-credentials.json','utf8'));
+const env=fs.readFileSync(new URL('../../web/.env.local',import.meta.url),'utf8');
+const config=JSON.parse(env.split('\n').find(x=>x.startsWith('VITE_FIREBASE_CONFIG=')).slice(21));
+const api=createBackend(config,{appName:'live-order-'+crypto.randomUUID()});
+const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+try{
+ await api.signIn(credentials.email,credentials.password);if(api.auth.currentUser.uid!==credentials.uid)throw Error('Wrong isolated reviewer');
+ const w=credentials.workspaceID,lists=(await getDocs(collection(api.db,'workspaces',w,'lists'))).docs.map(x=>({id:x.id,...x.data()}));
+ if(lists.length<2)throw Error('Need review lists');const [first,second]=lists;
+ await api.setLastViewedList(w,first.id);
+ const page=await browser.newPage({viewport:{width:390,height:844}});await page.goto('https://groceries-ros.web.app');
+ console.log(JSON.stringify({liveScripts:await page.locator('script[src]').evaluateAll(xs=>xs.map(x=>new URL(x.src).pathname))}));
+ await page.getByRole('button',{name:'Fortsätt med e-post',exact:true}).click();await page.getByLabel('E-postadress',{exact:true}).fill(credentials.email);await page.getByLabel('Lösenord',{exact:true}).fill(credentials.password);await page.getByRole('button',{name:'Logga in',exact:true}).click();
+ await expect(page.getByRole('heading',{name:first.name,exact:true})).toBeVisible();
+ const before=(await getDoc(doc(api.db,'workspaces',w,'lists',second.id))).data().lastChangedAt;
+ await page.getByRole('button',{name:/^Mina listor,/}).click();await page.getByRole('navigation',{name:'Inköpslistor'}).getByRole('button').filter({hasText:second.name}).click();
+ await expect.poll(async()=>(await getDoc(doc(api.db,'users',credentials.uid))).data().lastViewedListID).toBe(second.id);
+ const after=(await getDoc(doc(api.db,'workspaces',w,'lists',second.id))).data().lastChangedAt;
+ expect(before?.toMillis()??null).toBe(after?.toMillis()??null);
+ await page.reload();await expect(page.getByRole('heading',{name:second.name,exact:true})).toBeVisible();
+ await api.renameList(w,first.id,first.name);await page.getByRole('button',{name:/^Mina listor,/}).click();await expect(page.getByRole('navigation',{name:'Inköpslistor'}).getByRole('button').first()).toContainText(first.name);
+ await page.reload();await expect(page.getByRole('heading',{name:second.name,exact:true})).toBeVisible();
+ await page.evaluate(()=>navigator.serviceWorker.ready);await api.setLastViewedList(w,first.id);await expect(page.getByRole('heading',{name:second.name,exact:true})).toBeVisible();await page.reload();await expect(page.getByRole('heading',{name:first.name,exact:true})).toBeVisible();
+ console.log(JSON.stringify({controlledServiceWorker:await page.evaluate(()=>Boolean(navigator.serviceWorker.controller)),remotePreferenceNextReload:true}));
+ console.log(JSON.stringify({passed:true,liveProduction:true,isolatedReviewerOnly:true,savedPreference:true,reloadRestored:true,openingDoesNotChangeSharedOrder:true,mutationReorders:true}));
+}finally{await browser.close();await terminate(api.db);await deleteApp(api.app)}

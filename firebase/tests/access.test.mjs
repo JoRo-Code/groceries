@@ -290,3 +290,34 @@ test('last viewed list stays private and cannot change household membership',asy
  await assertFails(updateDoc(profile,{lastViewedListID:'missing-list'}));
  await assertFails(updateDoc(profile,{lastViewedListID:4}));
 });
+
+test('notification tokens are private, timestamp-bound and remain removable during account deletion',async()=>{
+ await create();await invite();await join();
+ const d=fresh('guest'),path='users/guest/devices/install-123456789',value={token:'synthetic-token-123456789012345',platform:'ios',updatedAt:serverTimestamp()};
+ await assertSucceeds(setDoc(doc(d,path),value));
+ await assertFails(getDoc(doc(db('owner'),path)));await assertFails(getDocs(collection(db('owner'),'users/guest/devices')));
+ await assertFails(setDoc(doc(db('owner'),path),value));
+ await assertFails(updateDoc(doc(d,path),{updatedAt:Timestamp.fromMillis(1)}));
+ await assertFails(updateDoc(doc(db('guest'),'users/guest'),{deletingAccount:true}));
+ await assertSucceeds(updateDoc(doc(d,'users/guest'),{deletingAccount:true}));
+ await assertFails(setDoc(doc(d,path),value));
+ await assertFails(updateDoc(doc(d,'workspaces/home/lists/week'),{name:'blocked'}));
+ await assertSucceeds(deleteDoc(doc(d,path)));
+ await assertSucceeds(updateDoc(doc(d,'users/guest'),{deletingAccount:deleteField()}));
+ await assertSucceeds(setDoc(doc(d,path),value));
+});
+
+test('actor markers bind to author and server timestamp; shared cleanup scrubs only own identity',async()=>{
+ await create();await invite();await join();const path='workspaces/home/lists/week/items/actor';const d=fresh('owner');
+ const item={name:'Vara',quantity:'1',checked:false,createdAt:serverTimestamp(),checkedAt:null,lastActorUID:'owner',lastActionAt:serverTimestamp()};
+ await assertFails(setDoc(doc(db('guest'),path),item));await assertSucceeds(setDoc(doc(d,path),item));
+ await assertFails(updateDoc(doc(db('guest'),path),{lastActorUID:'owner',lastActionAt:serverTimestamp()}));
+ await assertFails(updateDoc(doc(db('guest'),path),{lastActorUID:deleteField(),lastActionAt:deleteField()}));
+ await assertFails(updateDoc(doc(d,path),{lastActionAt:Timestamp.fromMillis(1)}));
+ await assertSucceeds(updateDoc(doc(db('guest'),path),{quantity:'2'}));
+ await assertSucceeds(updateDoc(doc(d,'users/owner'),{deletingAccount:true}));
+ await assertSucceeds(updateDoc(doc(d,'workspaces/home'),{deletingBy:'owner',inviteToken:deleteField()}));
+ await assertFails(updateDoc(doc(d,path),{quantity:'3',lastActorUID:deleteField(),lastActionAt:deleteField()}));
+ await assertSucceeds(updateDoc(doc(d,path),{lastActorUID:deleteField(),lastActionAt:deleteField()}));
+ const saved=(await getDoc(doc(d,path))).data();assert.equal(saved.quantity,'2');assert.equal(saved.lastActorUID,undefined);
+});
