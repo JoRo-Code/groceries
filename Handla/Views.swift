@@ -9,7 +9,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     private var shoppingPreview: Bool {
         #if DEBUG
-        ["--preview-shopping", "--preview-lists", "--preview-add"].contains(where: ProcessInfo.processInfo.arguments.contains)
+        ["--preview-shopping", "--preview-lists", "--preview-add", "--preview-history", "--preview-details"].contains(where: ProcessInfo.processInfo.arguments.contains)
         #else
         false
         #endif
@@ -226,33 +226,128 @@ private let handlaBlue = Color(red: 0.02, green: 0.55, blue: 0.95)
 private final class GroceryObservation: ObservableObject {
     @Published var items: [Grocery] = []
     @Published var loading = true
+    @Published var loadingOlder = false
+    @Published var hasOlder = true
     @Published var pending = false
     @Published var fromCache = false
-    private var listener: ListenerRegistration?
+    private var listeners: [ListenerRegistration] = []
+    private var recentListener: ListenerRegistration?
+    private var pageListeners: [ListenerRegistration] = []
+    private var timer: Task<Void, Never>?
     private var observationID = UUID()
-    func start(store: Store, listID: String) {
-        stop(); loading = true
-        let id = observationID, session = store.sessionID
-        listener = store.itemsRef(listID)?.addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, error in
+    private var isRunning = false
+    private var groups: [String: [Grocery]] = [:]
+    private var watchTokens: [String: UUID] = [:]
+    private var metadata: [String: (Bool, Bool)] = [:]
+    private var cutoff = Date().addingTimeInterval(-86400)
+    private var cursor: DocumentSnapshot?
+    private var unknownPhase = false
+    private var historyOpened = false
+    private var page = 0
+
+    private func parse(_ document: QueryDocumentSnapshot) -> Grocery {
+        let data = document.data(with: .estimate)
+        let name = data["name"] as? String ?? ""
+        return Grocery(id: document.documentID, name: name, quantity: data["quantity"] as? String ?? "", checked: data["checked"] as? Bool ?? false,
+            category: (data["category"] as? String).flatMap(GroceryCategory.init(rawValue:)) ?? GroceryCatalog.category(for: name),
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue(), checkedAt: (data["checkedAt"] as? Timestamp)?.dateValue())
+    }
+    private func publish() {
+        var merged: [String: Grocery] = [:]
+        for key in groups.keys.sorted() { for item in groups[key] ?? [] { merged[item.id] = item } }
+        for item in groups["recent"] ?? [] { merged[item.id] = item }
+        for item in groups["active"] ?? [] { merged[item.id] = item }
+        items = Array(merged.values)
+        pending = metadata.values.contains { $0.0 }
+        fromCache = metadata.values.contains { $0.1 }
+    }
+    private func listen(_ query: Query, key: String, store: Store) -> ListenerRegistration {
+        let id = observationID, session = store.sessionID, token = UUID()
+        watchTokens[key] = token
+        return query.addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, error in
             Task { @MainActor [weak self] in
-                guard let self, self.observationID == id, store.sessionID == session else { return }
+                guard let self, self.observationID == id, store.sessionID == session, self.watchTokens[key] == token else { return }
+                if let error { store.error = error.localizedDescription; self.loading = false; return }
+                self.groups[key] = (snapshot?.documents ?? []).map(self.parse)
+                self.metadata[key] = (snapshot?.metadata.hasPendingWrites ?? false, snapshot?.metadata.isFromCache ?? false)
                 self.loading = false
-                if let error { store.error = error.localizedDescription; return }
-                self.items = (snapshot?.documents ?? []).map { document in
-                    let name = document.get("name") as? String ?? ""
-                    let category = (document.get("category") as? String).flatMap(GroceryCategory.init(rawValue:)) ?? GroceryCatalog.category(for: name)
-                    return Grocery(id: document.documentID, name: name, quantity: document.get("quantity") as? String ?? "", checked: document.get("checked") as? Bool ?? false, category: category)
-                }
-                self.pending = snapshot?.metadata.hasPendingWrites ?? false
-                self.fromCache = snapshot?.metadata.isFromCache ?? false
+                self.publish()
             }
         }
     }
-    func stop() { listener?.remove(); listener = nil; observationID = UUID() }
+    func start(store: Store, listID: String, activeOnly: Bool = false) {
+        stop(); isRunning = true; loading = true; loadingOlder = false; hasOlder = true
+        groups = [:]; metadata = [:]; items = []; cursor = nil; unknownPhase = false; historyOpened = false; page = 0
+        cutoff = Date().addingTimeInterval(-86400)
+        guard let ref = store.itemsRef(listID) else { loading = false; return }
+        listeners.append(listen(ref.whereField("checked", isEqualTo: false), key: "active", store: store))
+        guard !activeOnly else { return }
+        refreshRecent(store: store, ref: ref)
+        timer = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                guard let self else { return }
+                if !self.historyOpened { await self.refresh(store: store, listID: listID) }
+            }
+        }
+    }
+    func refresh(store: Store, listID: String) async {
+        guard isRunning, !loadingOlder, let ref = store.itemsRef(listID) else { return }
+        let wasOpen = historyOpened
+        pageListeners.forEach { $0.remove() }; pageListeners = []
+        for key in Array(groups.keys) where key.hasPrefix("page-") { groups.removeValue(forKey: key); metadata.removeValue(forKey: key); watchTokens.removeValue(forKey: key) }
+        cursor = nil; unknownPhase = false; hasOlder = true; page = 0
+        cutoff = Date().addingTimeInterval(-86400)
+        refreshRecent(store: store, ref: ref); publish()
+        if wasOpen { await loadOlder(store: store, listID: listID) }
+    }
+    private func refreshRecent(store: Store, ref: CollectionReference) {
+        recentListener?.remove()
+        recentListener = listen(ref.whereField("checked", isEqualTo: true).whereField("checkedAt", isGreaterThanOrEqualTo: Timestamp(date: cutoff)).order(by: "checkedAt", descending: true), key: "recent", store: store)
+    }
+    func loadOlder(store: Store, listID: String) async {
+        guard isRunning, !loadingOlder, hasOlder, let ref = store.itemsRef(listID) else { return }
+        loadingOlder = true; historyOpened = true
+        let id = observationID, session = store.sessionID
+        var query: Query = ref.whereField("checked", isEqualTo: true)
+        if unknownPhase { query = query.whereField("checkedAt", isEqualTo: NSNull()).order(by: FieldPath.documentID()) }
+        else { query = query.whereField("checkedAt", isLessThan: Timestamp(date: cutoff)).order(by: "checkedAt", descending: true) }
+        if let cursor { query = query.start(afterDocument: cursor) }
+        do {
+            let snapshot = try await query.limit(to: 21).getDocuments()
+            guard observationID == id, store.sessionID == session else { return }
+            let documents = Array(snapshot.documents.prefix(20))
+            if let last = documents.last {
+                let key = "page-\(page)"; page += 1
+                groups[key] = documents.map(parse); publish()
+                // Keep loaded history live, including edits, deletion and restoration from another member.
+                pageListeners.append(listen(query.end(atDocument: last), key: key, store: store))
+                cursor = last
+            }
+            let continueWithUnknown = documents.isEmpty && !unknownPhase
+            if snapshot.documents.count <= 20 {
+                if unknownPhase { hasOlder = false }
+                else { unknownPhase = true; cursor = nil }
+            }
+            loadingOlder = false
+            if continueWithUnknown { await loadOlder(store: store, listID: listID) }
+        } catch {
+            guard observationID == id, store.sessionID == session else { return }
+            loadingOlder = false; store.error = error.localizedDescription
+        }
+    }
+    func stop() {
+        isRunning = false
+        listeners.forEach { $0.remove() }; listeners = []
+        pageListeners.forEach { $0.remove() }; pageListeners = []
+        recentListener?.remove(); recentListener = nil; timer?.cancel(); timer = nil
+        observationID = UUID()
+    }
 }
 
 struct ItemsView: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.scenePhase) private var scenePhase
     let list: ShoppingList
     let listCount: Int
     let preview: Bool
@@ -264,6 +359,7 @@ struct ItemsView: View {
     @State private var revealName: String?
     @State private var renaming = false
     @State private var renamedList = ""
+    @State private var previewHistoryCount = 0
     @State private var editing: Grocery?
     @State private var showingWorkspace = false
 
@@ -274,7 +370,15 @@ struct ItemsView: View {
     }
     private var items: [Grocery] { preview ? exampleItems : observation.items }
     private var active: [Grocery] { ordered(items.filter { !$0.checked }) }
-    private var bought: [Grocery] { ordered(items.filter(\.checked)) }
+    private var bought: [Grocery] {
+        let checked = items.filter(\.checked).sorted { ($0.checkedAt ?? .distantPast) > ($1.checkedAt ?? .distantPast) }
+        guard preview else { return checked }
+        let cutoff = Date().addingTimeInterval(-86400)
+        return checked.filter { ($0.checkedAt ?? .distantPast) >= cutoff } + Array(checked.filter { ($0.checkedAt ?? .distantPast) < cutoff }.prefix(previewHistoryCount))
+    }
+    private var canLoadOlder: Bool {
+        preview ? previewHistoryCount < items.filter { $0.checked && ($0.checkedAt ?? .distantPast) < Date().addingTimeInterval(-86400) }.count : observation.hasOlder
+    }
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -303,7 +407,7 @@ struct ItemsView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             Text(list.name).font(.system(size: 36, weight: .bold)).tracking(-0.8)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            Button { adding = true } label: {
+                            Button { var transaction = Transaction(); transaction.disablesAnimations = true; withTransaction(transaction) { adding = true } } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: "plus").font(.system(size: 21, weight: .light))
                                     Text("Ny vara").font(.system(size: 19))
@@ -327,6 +431,15 @@ struct ItemsView: View {
                             }
                             .frame(minHeight: geometry.size.height * 0.28, alignment: .top)
                             .background(Color(uiColor: .secondarySystemBackground).opacity(0.75))
+                        }
+                        if canLoadOlder {
+                            Button {
+                                if preview { previewHistoryCount += 20 }
+                                else { Task { await observation.loadOlder(store: store, listID: list.id) } }
+                            } label: {
+                                if observation.loadingOlder { ProgressView() }
+                                else { Text("Visa äldre inköp") }
+                            }.disabled(observation.loadingOlder).padding(18)
                         }
                         if !preview && (observation.pending || observation.fromCache) {
                             Text(observation.pending ? "Väntar på synkning…" : "Visar sparad lista")
@@ -366,11 +479,11 @@ struct ItemsView: View {
             }.disabled(renamedList.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || renamedList.trimmingCharacters(in: .whitespacesAndNewlines).count > 80)
         } message: { Text("Ange ett namn med 1–80 tecken.") }
         .sheet(item: $editing) { item in
-            GroceryEditor(item: item) { name, quantity, category in
+            GroceryEditor(item: item, preview: preview) { name, quantity, category in
                 if preview {
                     guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
                     let current = exampleItems[index]
-                    exampleItems[index] = Grocery(id: current.id, name: name, quantity: quantity, checked: current.checked, category: category)
+                    exampleItems[index] = Grocery(id: current.id, name: name, quantity: quantity, checked: current.checked, category: category, createdAt: current.createdAt, checkedAt: current.checkedAt)
                 } else { try store.updateItem(item.id, name: name, quantity: quantity, category: category, listID: list.id) }
             }.tint(handlaBlue)
         }
@@ -382,7 +495,16 @@ struct ItemsView: View {
                 }
             } else { WorkspaceView() }
         }
-        .onAppear { if !preview { observation.start(store: store, listID: list.id) } }
+        .onAppear {
+            if !preview { observation.start(store: store, listID: list.id) }
+            #if DEBUG
+            if preview && ProcessInfo.processInfo.arguments.contains("--preview-history") { previewHistoryCount = 20 }
+            if preview && ProcessInfo.processInfo.arguments.contains("--preview-details") { editing = exampleItems.first(where: { $0.id == "bread" }) }
+            #endif
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && !preview { Task { await observation.refresh(store: store, listID: list.id) } }
+        }
         .onDisappear { observation.stop() }
     }
     private func groceryRow(_ item: Grocery) -> some View {
@@ -403,6 +525,7 @@ struct ItemsView: View {
             }.buttonStyle(.plain).accessibilityLabel("Ändra \(item.name), mängd \(item.quantity)")
         }
         .frame(minHeight: 58)
+        .fixedSize(horizontal: false, vertical: true)
         .background(revealName == GroceryCatalog.normalized(item.name) ? handlaBlue.opacity(0.17) : Color.clear)
         .id(item.id)
         .overlay(alignment: .bottom) { DashedDivider().stroke(style: StrokeStyle(lineWidth: 0.7, dash: [2, 3])).frame(height: 1).padding(.leading, 24).foregroundStyle(Color.gray.opacity(0.27)) }
@@ -414,10 +537,10 @@ struct ItemsView: View {
     private func toggle(_ item: Grocery) {
         if preview {
             guard let index = exampleItems.firstIndex(where: { $0.id == item.id }) else { return }
-            exampleItems[index] = Grocery(id: item.id, name: item.name, quantity: item.quantity, checked: !item.checked, category: item.category)
+            exampleItems[index] = Grocery(id: item.id, name: item.name, quantity: item.quantity, checked: !item.checked, category: item.category, createdAt: item.createdAt, checkedAt: item.checked ? item.checkedAt : Date())
         } else {
             let session = store.sessionID
-            store.itemsRef(list.id)?.document(item.id).updateData(["checked": !item.checked]) { error in
+            store.itemsRef(list.id)?.document(item.id).updateData(item.checked ? ["checked": false] : ["checked": true, "checkedAt": FieldValue.serverTimestamp()]) { error in
                 Task { @MainActor in if store.sessionID == session, let error { store.error = error.localizedDescription } }
             }
         }
@@ -500,7 +623,7 @@ private struct OverviewRow: View {
             }.padding(.horizontal, 24).padding(.vertical, 22).frame(minHeight: 119, alignment: .topLeading).contentShape(Rectangle())
         }.buttonStyle(.plain)
             .overlay(alignment: .bottom) { Rectangle().fill(Color.gray.opacity(0.18)).frame(height: 0.5) }
-            .onAppear { if !preview { observation.start(store: store, listID: list.id) } }
+            .onAppear { if !preview { observation.start(store: store, listID: list.id, activeOnly: true) } }
             .onDisappear { observation.stop() }
     }
 }
@@ -538,34 +661,42 @@ private struct AddGroceriesView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 7) {
-                Button { dismiss() } label: { Image(systemName: "chevron.left").font(.system(size: 24, weight: .light)).frame(width: 35, height: 44) }.accessibilityLabel("Tillbaka")
-                HStack(spacing: 9) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Ny vara", text: $query).focused($focused).submitLabel(.done).onSubmit { addTyped() }
-                    if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.accessibilityLabel("Rensa sökning") }
-                }.padding(.horizontal, 12).frame(height: 44).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-                if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button { addTyped() } label: { Image(systemName: "plus.circle.fill").font(.system(size: 27)) }.accessibilityLabel("Lägg till vara")
-                } else {
-                    Button { fullCatalogue.toggle() } label: { Image(systemName: fullCatalogue ? "book.closed.fill" : "book").font(.system(size: 23)).frame(width: 35, height: 44) }
-                        .accessibilityLabel(fullCatalogue ? "Visa vanliga varor" : "Visa hela varukatalogen")
-                }
-            }.padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 10)
+            Color.clear.frame(height: 47)
+            VStack(alignment: .leading, spacing: 16) {
+                Text(list.name).font(.system(size: 36, weight: .bold)).tracking(-0.8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 10) {
+                    Image(systemName: "plus").font(.system(size: 21, weight: .light)).foregroundStyle(.secondary)
+                    TextField("Ny vara", text: $query).font(.system(size: 19)).focused($focused).submitLabel(.done).onSubmit { addTyped() }
+                    Button { focused = false; dismiss() } label: {
+                        Image(systemName: "xmark").font(.system(size: 18)).frame(width: 32, height: 44)
+                    }.accessibilityLabel("Stäng lägg till vara")
+                }.padding(.horizontal, 15).frame(height: 51).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+            }.padding(.horizontal, 23).padding(.top, 15).padding(.bottom, 19)
             if !query.isEmpty {
-                HStack(spacing: 16) {
+                VStack(spacing: 10) {
                     TextField("Mängd, t.ex. 2 l", text: $quantity).font(.subheadline).accessibilityLabel("Mängd för ny vara")
-                    Picker("Kategori", selection: Binding(get: { category }, set: { category = $0; manualCategory = true })) {
-                        ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) }
-                    }.tint(category.color).pickerStyle(.menu)
-                }.padding(.horizontal, 23).padding(.bottom, 8)
+                    HStack {
+                        Text("Kategori").font(.subheadline)
+                        Spacer()
+                        Picker("Kategori", selection: Binding(get: { category }, set: { category = $0; manualCategory = true })) {
+                            ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) }
+                        }.tint(category.color).pickerStyle(.menu).accessibilityLabel("Kategori för ny vara")
+                    }
+                    Button("Lägg till vara") { addTyped() }.buttonStyle(.borderedProminent).frame(maxWidth: .infinity, alignment: .trailing)
+                }.padding(.horizontal, 23).padding(.bottom, 12)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(fullCatalogue && query.isEmpty ? "Alla varor" : "Förslag").font(.subheadline).foregroundStyle(.secondary)
+                    HStack {
+                        Text(fullCatalogue && query.isEmpty ? "Alla varor" : "Förslag").font(.subheadline).foregroundStyle(.secondary)
+                        Spacer()
+                        Button { fullCatalogue.toggle() } label: { Image(systemName: fullCatalogue ? "book.closed.fill" : "book") }
+                            .accessibilityLabel(fullCatalogue ? "Visa vanliga varor" : "Visa hela varukatalogen")
+                    }
                     ChipLayout(spacing: 7) {
                         ForEach(suggestions) { suggestion in
-                            Button { add(suggestion.name, category: suggestion.category) } label: {
+                            Button { add(suggestion.name, category: manualCategory ? category : suggestion.category) } label: {
                                 HStack(spacing: 5) {
                                     Text(suggestion.name).font(.system(size: 15, weight: .medium))
                                     if items.contains(where: { GroceryCatalog.normalized($0.name) == suggestion.id && !$0.checked }) {
@@ -576,9 +707,11 @@ private struct AddGroceriesView: View {
                             }.buttonStyle(.plain).accessibilityLabel("Lägg till \(suggestion.name)")
                         }
                     }
-                    if suggestions.isEmpty { Text("Tryck på plus för att lägga till \(query).").font(.subheadline).foregroundStyle(.secondary) }
+                    if suggestions.isEmpty { Text("Tryck på Lägg till vara för att lägga till \(query).").font(.subheadline).foregroundStyle(.secondary) }
                     if preview { Text("Förhandsvisning · exempeldata").font(.caption2).foregroundStyle(.tertiary).padding(.top, 16) }
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 3)
+                    Color.clear.frame(maxWidth: .infinity).frame(minHeight: 220).contentShape(Rectangle())
+                        .onTapGesture { focused = false; dismiss() }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 23).padding(.top, 3)
             }.scrollDismissesKeyboard(.interactively)
         }
         .background(Color(uiColor: .systemBackground)).tint(handlaBlue).toolbar(.hidden, for: .navigationBar)
@@ -603,7 +736,7 @@ private struct AddGroceriesView: View {
         if let existing = items.first(where: { GroceryCatalog.normalized($0.name) == GroceryCatalog.normalized(name) }) {
             if existing.checked {
                 if preview, let index = exampleItems.firstIndex(where: { $0.id == existing.id }) {
-                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category)
+                    exampleItems[index] = Grocery(id: existing.id, name: existing.name, quantity: existing.quantity, checked: false, category: existing.category, createdAt: existing.createdAt, checkedAt: existing.checkedAt)
                 } else {
                     let session = store.sessionID
                     store.itemsRef(list.id)?.document(existing.id).updateData(["checked": false]) { error in
@@ -618,7 +751,7 @@ private struct AddGroceriesView: View {
         do {
             if preview {
                 guard name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Varunamnet eller mängden är för långt.") }
-                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category))
+                exampleItems.append(Grocery(id: UUID().uuidString, name: name, quantity: quantity, checked: false, category: category, createdAt: Date()))
             } else { try store.addItem(name, quantity: quantity, category: category, listID: list.id) }
             focused = false
             onAdded(name)
@@ -629,11 +762,16 @@ private struct AddGroceriesView: View {
 private struct GroceryEditor: View {
     @Environment(\.dismiss) private var dismiss
     let onSave: (String, String, GroceryCategory) throws -> Void
+    let createdAt: Date?
+    let checkedAt: Date?
+    let preview: Bool
     @State private var name: String
     @State private var quantity: String
     @State private var category: GroceryCategory
     @State private var error: String?
-    init(item: Grocery, onSave: @escaping (String, String, GroceryCategory) throws -> Void) {
+    init(item: Grocery, preview: Bool = false, onSave: @escaping (String, String, GroceryCategory) throws -> Void) {
+        self.preview = preview
+        self.createdAt = item.createdAt; self.checkedAt = item.checkedAt
         self.onSave = onSave; _name = State(initialValue: item.name); _quantity = State(initialValue: item.quantity); _category = State(initialValue: item.category)
     }
     var body: some View {
@@ -641,6 +779,11 @@ private struct GroceryEditor: View {
             Form {
                 Section("Vara") { TextField("Namn", text: $name); HStack { Text("Mängd"); TextField("Till exempel 2 l", text: $quantity).multilineTextAlignment(.trailing) } }
                 Section("Kategori") { Picker("Kategori", selection: $category) { ForEach(GroceryCategory.allCases) { value in Text(value.title).tag(value) } } }
+                if preview { Text("Förhandsvisning · exempeldata").font(.caption).foregroundStyle(.secondary) }
+                Section("Datum") {
+                    LabeledContent("Tillagd", value: createdAt?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
+                    LabeledContent("Senast avbockad", value: checkedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Datum saknas")
+                }
                 if let error { Text(error).foregroundStyle(.red) }
             }.navigationTitle("Ändra vara").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -692,8 +835,8 @@ private enum ShoppingExamples {
             Grocery(id: "cucumber", name: "Gurka", quantity: "1 st", checked: false, category: .produce),
             Grocery(id: "milk", name: "Mjölk", quantity: "2 l", checked: false, category: .dairy),
             Grocery(id: "pasta", name: "Pasta", quantity: "500 g", checked: false, category: .pantry),
-            Grocery(id: "bread", name: "Bröd", quantity: "1 st", checked: true, category: .bakery),
-            Grocery(id: "coffee", name: "Kaffe", quantity: "1 pkt", checked: true, category: .drinks),
+            Grocery(id: "bread", name: "Bröd", quantity: "1 st", checked: true, category: .bakery, createdAt: Date().addingTimeInterval(-172800), checkedAt: Date().addingTimeInterval(-3600)),
+            Grocery(id: "coffee", name: "Kaffe", quantity: "1 pkt", checked: true, category: .drinks, createdAt: Date().addingTimeInterval(-604800), checkedAt: Date().addingTimeInterval(-172800)),
             Grocery(id: "eggs", name: "Ägg", quantity: "12 st", checked: true, category: .dairy)
         ],
         "weekend": [Grocery(id: "salmon", name: "Lax", quantity: "600 g", checked: false, category: .fish), Grocery(id: "potato", name: "Potatis", quantity: "1 kg", checked: false, category: .produce), Grocery(id: "cream", name: "Crème fraiche", quantity: "2 dl", checked: false, category: .dairy)],

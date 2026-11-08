@@ -12,9 +12,12 @@ struct Grocery: Identifiable {
     let quantity: String
     let checked: Bool
     let category: GroceryCategory
+    let createdAt: Date?
+    let checkedAt: Date?
 
-    init(id: String, name: String, quantity: String, checked: Bool, category: GroceryCategory = .other) {
+    init(id: String, name: String, quantity: String, checked: Bool, category: GroceryCategory = .other, createdAt: Date? = nil, checkedAt: Date? = nil) {
         self.id = id; self.name = name; self.quantity = quantity; self.checked = checked; self.category = category
+        self.createdAt = createdAt; self.checkedAt = checkedAt
     }
 }
 struct Invitation: Identifiable { let id: String; let workspaceID: String; let name: String }
@@ -337,7 +340,7 @@ final class Store: ObservableObject {
         guard !name.isEmpty, name.count <= 120, quantity.count <= 80 else { throw HandlaError.message("Ange ett varunamn på högst 120 tecken och en mängd på högst 80 tecken.") }
         let key = SHA256.hash(data: Data(GroceryCatalog.normalized(name).utf8)).map { String(format: "%02x", $0) }.joined()
         let batch = db.batch()
-        batch.setData(["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "checked": false, "category": category.rawValue], forDocument: items.document())
+        batch.setData(["name": name, "quantity": quantity.trimmingCharacters(in: .whitespacesAndNewlines), "checked": false, "category": category.rawValue, "createdAt": FieldValue.serverTimestamp(), "checkedAt": NSNull()], forDocument: items.document())
         batch.setData(["name": name, "category": category.rawValue], forDocument: db.collection("workspaces").document(workspaceID).collection("products").document(key))
         let generation = sessionGeneration
         batch.commit { [weak self] error in
